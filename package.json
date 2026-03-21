@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Ultra-fast JSON Schema validator powered by simdjson. 11,000x faster schema compilation, 2-4x faster validation than ajv.",
   "main": "index.js",
+  "types": "index.d.ts",
   "scripts": {
     "install": "node-gyp-build",
     "build": "node-gyp rebuild",
@@ -41,7 +42,9 @@
   },
   "files": [
     "index.js",
+    "index.d.ts",
     "compat.js",
+    "compat.d.ts",
     "binding.gyp",
     "binding/",
     "include/",
@@ -52,11 +55,11 @@
     "LICENSE"
   ],
   "dependencies": {
-    "node-addon-api": "^8.0.0"
+    "node-addon-api": "^8.0.0",
+    "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
     "node-gyp": "^11.0.0",
-    "node-gyp-build": "^4.8.4",
     "prebuildify": "^6.0.1"
   },
   "gypfile": true
