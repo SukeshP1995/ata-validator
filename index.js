@@ -17,6 +17,11 @@ class Validator {
   validateJSON(jsonStr) {
     return this._compiled.validateJSON(jsonStr);
   }
+
+  // Fast boolean-only check — no error details, maximum speed
+  isValidJSON(jsonStr) {
+    return this._compiled.isValidJSON(jsonStr);
+  }
 }
 
 function validate(schema, data) {

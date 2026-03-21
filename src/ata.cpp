@@ -1335,9 +1335,8 @@ validation_result validate(const schema_ref& schema, std::string_view json,
     return {false, {{error_code::invalid_schema, "", "schema not compiled"}}};
   }
 
-  dom::parser doc_parser;
   auto padded = simdjson::padded_string(json);
-  auto result = doc_parser.parse(padded);
+  auto result = schema.impl->doc_parser.parse(padded);
   if (result.error()) {
     return {false, {{error_code::invalid_json, "", "invalid JSON document"}}};
   }
@@ -1351,8 +1350,8 @@ validation_result validate(const schema_ref& schema, std::string_view json,
     // Codegen said invalid OR hit COMPOSITION — fall through to tree walker
   }
 
-  // Slow path: tree walker with error details
-  auto result2 = doc_parser.parse(padded);
+  // Slow path: re-parse + tree walker with error details
+  auto result2 = schema.impl->doc_parser.parse(padded);
   std::vector<validation_error> errors;
   validate_node(schema.impl->root, result2.value(), "", *schema.impl, errors,
                 opts.all_errors);
