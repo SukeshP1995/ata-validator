@@ -676,7 +676,8 @@ class CompiledSchema : public Napi::ObjectWrap<CompiledSchema> {
         env, "CompiledSchema",
         {InstanceMethod("validate", &CompiledSchema::Validate),
          InstanceMethod("validateJSON", &CompiledSchema::ValidateJSON),
-         InstanceMethod("validateDirect", &CompiledSchema::ValidateDirect)});
+         InstanceMethod("validateDirect", &CompiledSchema::ValidateDirect),
+         InstanceMethod("isValidJSON", &CompiledSchema::IsValidJSON)});
     auto* constructor = new Napi::FunctionReference();
     *constructor = Napi::Persistent(func);
     env.SetInstanceData(constructor);
@@ -727,6 +728,17 @@ class CompiledSchema : public Napi::ObjectWrap<CompiledSchema> {
     std::string json = info[0].As<Napi::String>().Utf8Value();
     auto result = ata::validate(schema_, json);
     return make_result(env, result);
+  }
+
+  // Fast boolean-only validation — no error object creation
+  Napi::Value IsValidJSON(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+      return Napi::Boolean::New(env, false);
+    }
+    std::string json = info[0].As<Napi::String>().Utf8Value();
+    auto result = ata::validate(schema_, json);
+    return Napi::Boolean::New(env, result.valid);
   }
 
   // Explicit direct validation (always V8 traversal, never stringify)
