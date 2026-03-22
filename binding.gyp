@@ -10,7 +10,12 @@
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
         "include",
-        "deps/simdjson"
+        "deps/simdjson",
+        "<!@(node -p \"process.platform === 'darwin' ? '/opt/homebrew/opt/re2/include' : '/usr/include'\")",
+        "<!@(node -p \"process.platform === 'darwin' ? '/opt/homebrew/opt/abseil/include' : '/usr/include'\")"
+      ],
+      "libraries": [
+        "<!@(node -p \"process.platform === 'darwin' ? '-L/opt/homebrew/opt/re2/lib -lre2' : '-lre2'\")"
       ],
       "dependencies": [
         "<!(node -p \"require('node-addon-api').gyp\")"
