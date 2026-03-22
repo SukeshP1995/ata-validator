@@ -44,6 +44,9 @@ const SUPPORTED_FILES = [
   "dependentRequired.json",
   "dependentSchemas.json",
   "propertyNames.json",
+  "prefixItems.json",
+  "format.json",
+  "anchor.json",
 ];
 
 let totalPass = 0;
@@ -73,7 +76,6 @@ for (const file of SUPPORTED_FILES) {
     const hasAnchor =
       schemaStr.includes('"$anchor"') &&
       !schemaStr.includes('"$defs"');
-
     if (hasRemoteRef || hasDynamicRef || hasAnchor) {
       fileSkip += suite.tests.length;
       totalSkip += suite.tests.length;
@@ -91,6 +93,12 @@ for (const file of SUPPORTED_FILES) {
     }
 
     for (const test of suite.tests) {
+      // Skip format "annotation by default" tests — ata validates formats
+      if (file === "format.json" && test.description.includes("only an annotation")) {
+        fileSkip++;
+        totalSkip++;
+        continue;
+      }
       try {
         const result = validator.validate(test.data);
         if (result.valid === test.valid) {

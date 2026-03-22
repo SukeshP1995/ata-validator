@@ -76,6 +76,8 @@ struct schema_node {
 
   std::string ref;
 
+  std::unordered_map<std::string, schema_node_ptr> defs;
+
   std::optional<bool> boolean_schema;
 };
 
@@ -209,15 +211,64 @@ static uint64_t utf8_codepoint_length(const std::string& s) {
 }
 
 // Serialize a Napi::Value to a minified JSON string (for enum/const comparison)
-static std::string napi_to_json(Napi::Env env, Napi::Value val) {
-  auto json = env.Global().Get("JSON").As<Napi::Object>();
-  auto stringify = json.Get("stringify").As<Napi::Function>();
-  auto result = stringify.Call(json, {val});
-  if (result.IsString()) {
-    return result.As<Napi::String>().Utf8Value();
+// Canonical JSON: sort object keys for semantic equality comparison
+static std::string napi_canonical_json(Napi::Env env, Napi::Value val) {
+  if (val.IsNull() || val.IsUndefined()) return "null";
+  if (val.IsBoolean()) return val.As<Napi::Boolean>().Value() ? "true" : "false";
+  if (val.IsNumber()) {
+    double d = val.As<Napi::Number>().DoubleValue();
+    if (d == static_cast<int64_t>(d) && std::abs(d) <= 9007199254740991.0) {
+      return std::to_string(static_cast<int64_t>(d));
+    }
+    auto json = env.Global().Get("JSON").As<Napi::Object>();
+    auto stringify = json.Get("stringify").As<Napi::Function>();
+    auto r = stringify.Call(json, {val});
+    return r.IsString() ? r.As<Napi::String>().Utf8Value() : "null";
   }
-  if (val.IsUndefined()) return "null";
+  if (val.IsString()) {
+    // JSON-encode the string
+    auto json = env.Global().Get("JSON").As<Napi::Object>();
+    auto stringify = json.Get("stringify").As<Napi::Function>();
+    auto r = stringify.Call(json, {val});
+    return r.IsString() ? r.As<Napi::String>().Utf8Value() : "null";
+  }
+  if (val.IsArray()) {
+    auto arr = val.As<Napi::Array>();
+    std::string r = "[";
+    for (uint32_t i = 0; i < arr.Length(); ++i) {
+      if (i) r += ',';
+      r += napi_canonical_json(env, arr.Get(i));
+    }
+    r += ']';
+    return r;
+  }
+  if (val.IsObject()) {
+    auto obj = val.As<Napi::Object>();
+    auto keys = obj.GetPropertyNames();
+    std::vector<std::string> sorted_keys;
+    for (uint32_t i = 0; i < keys.Length(); ++i) {
+      sorted_keys.push_back(keys.Get(i).As<Napi::String>().Utf8Value());
+    }
+    std::sort(sorted_keys.begin(), sorted_keys.end());
+    std::string r = "{";
+    for (size_t i = 0; i < sorted_keys.size(); ++i) {
+      if (i) r += ',';
+      // JSON-encode the key
+      auto json = env.Global().Get("JSON").As<Napi::Object>();
+      auto stringify = json.Get("stringify").As<Napi::Function>();
+      auto k = stringify.Call(json, {Napi::String::New(env, sorted_keys[i])});
+      r += k.As<Napi::String>().Utf8Value();
+      r += ':';
+      r += napi_canonical_json(env, obj.Get(sorted_keys[i]));
+    }
+    r += '}';
+    return r;
+  }
   return "null";
+}
+
+static std::string napi_to_json(Napi::Env env, Napi::Value val) {
+  return napi_canonical_json(env, val);
 }
 
 static void validate_napi(const schema_node_ptr& node,
@@ -244,63 +295,80 @@ static void validate_napi(const schema_node_ptr& node,
     return;
   }
 
-  // $ref
+  // $ref — Draft 2020-12: $ref is not a short-circuit, sibling keywords still apply
+  bool ref_resolved = false;
   if (!node->ref.empty()) {
-    // First check defs map
     auto it = ctx.defs.find(node->ref);
     if (it != ctx.defs.end()) {
       validate_napi(it->second, value, env, path, ctx, errors);
-      return;
+      ref_resolved = true;
     }
-    // JSON Pointer resolution from root
-    if (node->ref.size() > 1 && node->ref[0] == '#' &&
+    if (!ref_resolved && node->ref.size() > 1 && node->ref[0] == '#' &&
         node->ref[1] == '/') {
+      // Decode JSON Pointer segments
+      auto decode_seg = [](const std::string& seg) -> std::string {
+        std::string pct;
+        for (size_t i = 0; i < seg.size(); ++i) {
+          if (seg[i] == '%' && i + 2 < seg.size()) {
+            auto hex = [](char c) -> int {
+              if (c >= '0' && c <= '9') return c - '0';
+              if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+              if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+              return -1;
+            };
+            int hv = hex(seg[i+1]), lv = hex(seg[i+2]);
+            if (hv >= 0 && lv >= 0) { pct += static_cast<char>(hv * 16 + lv); i += 2; }
+            else pct += seg[i];
+          } else pct += seg[i];
+        }
+        std::string out;
+        for (size_t i = 0; i < pct.size(); ++i) {
+          if (pct[i] == '~' && i + 1 < pct.size()) {
+            if (pct[i+1] == '1') { out += '/'; ++i; }
+            else if (pct[i+1] == '0') { out += '~'; ++i; }
+            else out += pct[i];
+          } else out += pct[i];
+        }
+        return out;
+      };
       std::string pointer = node->ref.substr(2);
+      std::vector<std::string> segments;
+      size_t spos = 0;
+      while (spos < pointer.size()) {
+        size_t snext = pointer.find('/', spos);
+        segments.push_back(decode_seg(
+            pointer.substr(spos, snext == std::string::npos ? snext : snext - spos)));
+        spos = (snext == std::string::npos) ? pointer.size() : snext + 1;
+      }
       schema_node_ptr current = ctx.root;
       bool resolved = true;
-      size_t pos = 0;
-      while (pos < pointer.size() && current) {
-        size_t next = pointer.find('/', pos);
-        std::string segment =
-            pointer.substr(pos, next == std::string::npos ? next : next - pos);
-        std::string key;
-        for (size_t i = 0; i < segment.size(); ++i) {
-          if (segment[i] == '~' && i + 1 < segment.size()) {
-            if (segment[i + 1] == '1') { key += '/'; ++i; }
-            else if (segment[i + 1] == '0') { key += '~'; ++i; }
-            else key += segment[i];
-          } else {
-            key += segment[i];
-          }
-        }
-        if (key == "properties" && !current->properties.empty()) {
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string prop = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          auto pit = current->properties.find(prop);
+      for (size_t si = 0; si < segments.size() && current; ++si) {
+        const auto& key = segments[si];
+        if (key == "properties" && si + 1 < segments.size()) {
+          auto pit = current->properties.find(segments[++si]);
           if (pit != current->properties.end()) current = pit->second;
           else { resolved = false; break; }
         } else if (key == "items" && current->items_schema) {
           current = current->items_schema;
         } else if (key == "$defs" || key == "definitions") {
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string def = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          auto dit = ctx.defs.find("#/" + key + "/" + def);
-          if (dit != ctx.defs.end()) current = dit->second;
-          else { resolved = false; break; }
+          if (si + 1 < segments.size()) {
+            const auto& def_name = segments[++si];
+            auto dit = current->defs.find(def_name);
+            if (dit != current->defs.end()) current = dit->second;
+            else {
+              auto cit = ctx.defs.find("#/" + key + "/" + def_name);
+              if (cit != ctx.defs.end()) current = cit->second;
+              else { resolved = false; break; }
+            }
+          } else { resolved = false; break; }
         } else if (key == "allOf" || key == "anyOf" || key == "oneOf") {
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string idx_s = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          size_t idx = std::stoul(idx_s);
-          auto& vec = (key == "allOf") ? current->all_of
-                    : (key == "anyOf") ? current->any_of : current->one_of;
-          if (idx < vec.size()) current = vec[idx];
-          else { resolved = false; break; }
+          if (si + 1 < segments.size()) {
+            size_t idx = std::stoul(segments[++si]);
+            auto& vec = (key == "allOf") ? current->all_of
+                      : (key == "anyOf") ? current->any_of : current->one_of;
+            if (idx < vec.size()) current = vec[idx];
+            else { resolved = false; break; }
+          } else { resolved = false; break; }
         } else if (key == "not" && current->not_schema) {
           current = current->not_schema;
         } else if (key == "if" && current->if_schema) {
@@ -313,28 +381,26 @@ static void validate_napi(const schema_node_ptr& node,
                    current->additional_properties_schema) {
           current = current->additional_properties_schema;
         } else if (key == "prefixItems") {
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string idx_s = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          size_t idx = std::stoul(idx_s);
-          if (idx < current->prefix_items.size()) current = current->prefix_items[idx];
-          else { resolved = false; break; }
+          if (si + 1 < segments.size()) {
+            size_t idx = std::stoul(segments[++si]);
+            if (idx < current->prefix_items.size()) current = current->prefix_items[idx];
+            else { resolved = false; break; }
+          } else { resolved = false; break; }
         } else { resolved = false; break; }
-        pos = (next == std::string::npos) ? pointer.size() : next + 1;
       }
       if (resolved && current) {
         validate_napi(current, value, env, path, ctx, errors);
-        return;
+        ref_resolved = true;
       }
     }
-    if (node->ref == "#" && ctx.root) {
+    if (!ref_resolved && node->ref == "#" && ctx.root) {
       validate_napi(ctx.root, value, env, path, ctx, errors);
-      return;
+      ref_resolved = true;
     }
-    errors.push_back({ata::error_code::ref_not_found, path,
-                      "cannot resolve $ref: " + node->ref});
-    return;
+    if (!ref_resolved) {
+      errors.push_back({ata::error_code::ref_not_found, path,
+                        "cannot resolve $ref: " + node->ref});
+    }
   }
 
   auto actual_type = napi_type_of(value);

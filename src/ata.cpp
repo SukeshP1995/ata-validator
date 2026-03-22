@@ -133,6 +133,43 @@ namespace ata {
 
 using namespace simdjson;
 
+// Canonical JSON: sort object keys for semantic equality comparison
+static std::string canonical_json(dom::element el) {
+  switch (el.type()) {
+    case dom::element_type::OBJECT: {
+      dom::object obj; el.get(obj);
+      std::vector<std::pair<std::string_view, dom::element>> entries;
+      for (auto [k, v] : obj) entries.push_back({k, v});
+      std::sort(entries.begin(), entries.end(),
+                [](const auto& a, const auto& b) { return a.first < b.first; });
+      std::string r = "{";
+      for (size_t i = 0; i < entries.size(); ++i) {
+        if (i) r += ',';
+        r += '"';
+        r += entries[i].first;
+        r += "\":";
+        r += canonical_json(entries[i].second);
+      }
+      r += '}';
+      return r;
+    }
+    case dom::element_type::ARRAY: {
+      dom::array arr; el.get(arr);
+      std::string r = "[";
+      bool first = true;
+      for (auto v : arr) {
+        if (!first) r += ',';
+        first = false;
+        r += canonical_json(v);
+      }
+      r += ']';
+      return r;
+    }
+    default:
+      return std::string(minify(el));
+  }
+}
+
 // Forward declarations
 struct schema_node;
 using schema_node_ptr = std::shared_ptr<schema_node>;
@@ -205,6 +242,9 @@ struct schema_node {
 
   // $ref
   std::string ref;
+
+  // $defs — stored on node for pointer navigation
+  std::unordered_map<std::string, schema_node_ptr> defs;
 
   // boolean schema
   std::optional<bool> boolean_schema;
@@ -483,10 +523,10 @@ static schema_node_ptr compile_node(dom::element el,
   // enum — pre-minify each value at compile time
   dom::element enum_el;
   if (obj["enum"].get(enum_el) == SUCCESS) {
-    node->enum_values_raw = std::string(minify(enum_el));
+    node->enum_values_raw = canonical_json(enum_el);
     if (enum_el.is<dom::array>()) {
       dom::array enum_arr; enum_el.get(enum_arr); for (auto e : enum_arr) {
-        node->enum_values_minified.push_back(std::string(minify(e)));
+        node->enum_values_minified.push_back(canonical_json(e));
       }
     }
   }
@@ -494,7 +534,7 @@ static schema_node_ptr compile_node(dom::element el,
   // const
   dom::element const_el;
   if (obj["const"].get(const_el) == SUCCESS) {
-    node->const_value_raw = std::string(minify(const_el));
+    node->const_value_raw = canonical_json(const_el);
   }
 
   // composition
@@ -541,14 +581,18 @@ static schema_node_ptr compile_node(dom::element el,
   if (obj["$defs"].get(defs_el) == SUCCESS && defs_el.is<dom::object>()) {
     dom::object defs_obj; defs_el.get(defs_obj); for (auto [key, val] : defs_obj) {
       std::string def_path = "#/$defs/" + std::string(key);
-      ctx.defs[def_path] = compile_node(val, ctx);
+      auto compiled = compile_node(val, ctx);
+      ctx.defs[def_path] = compiled;
+      node->defs[std::string(key)] = compiled;
     }
   }
   if (obj["definitions"].get(defs_el) == SUCCESS &&
       defs_el.is<dom::object>()) {
     dom::object defs_obj; defs_el.get(defs_obj); for (auto [key, val] : defs_obj) {
       std::string def_path = "#/definitions/" + std::string(key);
-      ctx.defs[def_path] = compile_node(val, ctx);
+      auto compiled = compile_node(val, ctx);
+      ctx.defs[def_path] = compiled;
+      node->defs[std::string(key)] = compiled;
     }
   }
 
@@ -632,79 +676,106 @@ static void validate_node(const schema_node_ptr& node,
     return;
   }
 
-  // $ref
+  // $ref — Draft 2020-12: $ref is not a short-circuit, sibling keywords still apply
+  bool ref_resolved = false;
   if (!node->ref.empty()) {
     // First check defs map
     auto it = ctx.defs.find(node->ref);
     if (it != ctx.defs.end()) {
       validate_node(it->second, value, path, ctx, errors, all_errors);
-      return;
+      ref_resolved = true;
     }
     // Try JSON Pointer resolution from root (e.g., "#/properties/foo")
     if (node->ref.size() > 1 && node->ref[0] == '#' &&
         node->ref[1] == '/') {
-      // Walk the schema tree following the pointer
-      std::string pointer = node->ref.substr(2);
-      schema_node_ptr current = ctx.root;
-      bool resolved = true;
-      size_t pos = 0;
-      while (pos < pointer.size() && current) {
-        size_t next = pointer.find('/', pos);
-        std::string segment =
-            pointer.substr(pos, next == std::string::npos ? next : next - pos);
-        // Unescape JSON Pointer: ~1 -> /, ~0 -> ~
-        std::string key;
-        for (size_t i = 0; i < segment.size(); ++i) {
-          if (segment[i] == '~' && i + 1 < segment.size()) {
-            if (segment[i + 1] == '1') { key += '/'; ++i; }
-            else if (segment[i + 1] == '0') { key += '~'; ++i; }
-            else key += segment[i];
+      // Decode JSON Pointer segments
+      auto decode_pointer_segment = [](const std::string& seg) -> std::string {
+        // Percent-decode first
+        std::string pct;
+        for (size_t i = 0; i < seg.size(); ++i) {
+          if (seg[i] == '%' && i + 2 < seg.size()) {
+            char h = seg[i+1], l = seg[i+2];
+            auto hex = [](char c) -> int {
+              if (c >= '0' && c <= '9') return c - '0';
+              if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+              if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+              return -1;
+            };
+            int hv = hex(h), lv = hex(l);
+            if (hv >= 0 && lv >= 0) {
+              pct += static_cast<char>(hv * 16 + lv);
+              i += 2;
+            } else {
+              pct += seg[i];
+            }
           } else {
-            key += segment[i];
+            pct += seg[i];
           }
         }
-        // Navigate the compiled schema tree
-        if (key == "properties" && !current->properties.empty()) {
-          // Next segment is the property name
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string prop_name = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
+        // Then JSON Pointer unescape: ~1 -> /, ~0 -> ~
+        std::string out;
+        for (size_t i = 0; i < pct.size(); ++i) {
+          if (pct[i] == '~' && i + 1 < pct.size()) {
+            if (pct[i + 1] == '1') { out += '/'; ++i; }
+            else if (pct[i + 1] == '0') { out += '~'; ++i; }
+            else out += pct[i];
+          } else {
+            out += pct[i];
+          }
+        }
+        return out;
+      };
+
+      // Split pointer into segments
+      std::string pointer = node->ref.substr(2);
+      std::vector<std::string> segments;
+      size_t spos = 0;
+      while (spos < pointer.size()) {
+        size_t snext = pointer.find('/', spos);
+        segments.push_back(decode_pointer_segment(
+            pointer.substr(spos, snext == std::string::npos ? snext : snext - spos)));
+        spos = (snext == std::string::npos) ? pointer.size() : snext + 1;
+      }
+
+      // Walk the schema tree
+      schema_node_ptr current = ctx.root;
+      bool resolved = true;
+      for (size_t si = 0; si < segments.size() && current; ++si) {
+        const auto& key = segments[si];
+
+        if (key == "properties" && si + 1 < segments.size()) {
+          const auto& prop_name = segments[++si];
           auto pit = current->properties.find(prop_name);
           if (pit != current->properties.end()) {
             current = pit->second;
-          } else {
-            resolved = false; break;
-          }
+          } else { resolved = false; break; }
         } else if (key == "items" && current->items_schema) {
           current = current->items_schema;
         } else if (key == "$defs" || key == "definitions") {
-          // Next segment is the def name — already in ctx.defs
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string def_name = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          std::string full_ref = "#/" + key + "/" + def_name;
-          auto dit = ctx.defs.find(full_ref);
-          if (dit != ctx.defs.end()) {
-            current = dit->second;
-          } else {
-            resolved = false; break;
-          }
+          if (si + 1 < segments.size()) {
+            const auto& def_name = segments[++si];
+            // Navigate into node's defs map
+            auto dit = current->defs.find(def_name);
+            if (dit != current->defs.end()) {
+              current = dit->second;
+            } else {
+              // Fallback: try ctx.defs with full path
+              std::string full_ref = "#/" + key + "/" + def_name;
+              auto cit = ctx.defs.find(full_ref);
+              if (cit != ctx.defs.end()) {
+                current = cit->second;
+              } else { resolved = false; break; }
+            }
+          } else { resolved = false; break; }
         } else if (key == "allOf" || key == "anyOf" || key == "oneOf") {
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string idx_str = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          size_t idx = std::stoul(idx_str);
-          auto& vec = (key == "allOf") ? current->all_of
-                    : (key == "anyOf") ? current->any_of
-                    : current->one_of;
-          if (idx < vec.size()) {
-            current = vec[idx];
-          } else {
-            resolved = false; break;
-          }
+          if (si + 1 < segments.size()) {
+            size_t idx = std::stoul(segments[++si]);
+            auto& vec = (key == "allOf") ? current->all_of
+                      : (key == "anyOf") ? current->any_of
+                      : current->one_of;
+            if (idx < vec.size()) { current = vec[idx]; }
+            else { resolved = false; break; }
+          } else { resolved = false; break; }
         } else if (key == "not" && current->not_schema) {
           current = current->not_schema;
         } else if (key == "if" && current->if_schema) {
@@ -717,34 +788,29 @@ static void validate_node(const schema_node_ptr& node,
                    current->additional_properties_schema) {
           current = current->additional_properties_schema;
         } else if (key == "prefixItems") {
-          pos = (next == std::string::npos) ? pointer.size() : next + 1;
-          next = pointer.find('/', pos);
-          std::string idx_str = pointer.substr(
-              pos, next == std::string::npos ? next : next - pos);
-          size_t idx = std::stoul(idx_str);
-          if (idx < current->prefix_items.size()) {
-            current = current->prefix_items[idx];
-          } else {
-            resolved = false; break;
-          }
+          if (si + 1 < segments.size()) {
+            size_t idx = std::stoul(segments[++si]);
+            if (idx < current->prefix_items.size()) { current = current->prefix_items[idx]; }
+            else { resolved = false; break; }
+          } else { resolved = false; break; }
         } else {
           resolved = false; break;
         }
-        pos = (next == std::string::npos) ? pointer.size() : next + 1;
       }
       if (resolved && current) {
         validate_node(current, value, path, ctx, errors, all_errors);
-        return;
+        ref_resolved = true;
       }
     }
     // Self-reference: "#"
-    if (node->ref == "#" && ctx.root) {
+    if (!ref_resolved && node->ref == "#" && ctx.root) {
       validate_node(ctx.root, value, path, ctx, errors, all_errors);
-      return;
+      ref_resolved = true;
     }
-    errors.push_back({error_code::ref_not_found, path,
-                      "cannot resolve $ref: " + node->ref});
-    return;
+    if (!ref_resolved) {
+      errors.push_back({error_code::ref_not_found, path,
+                        "cannot resolve $ref: " + node->ref});
+    }
   }
 
   // type
@@ -770,7 +836,7 @@ static void validate_node(const schema_node_ptr& node,
 
   // enum — use pre-minified values (no re-parsing)
   if (!node->enum_values_minified.empty()) {
-    std::string val_str = std::string(minify(value));
+    std::string val_str = canonical_json(value);
     bool found = false;
     for (const auto& ev : node->enum_values_minified) {
       if (ev == val_str) {
@@ -786,7 +852,7 @@ static void validate_node(const schema_node_ptr& node,
 
   // const
   if (node->const_value_raw.has_value()) {
-    std::string val_str = std::string(minify(value));
+    std::string val_str = canonical_json(value);
     if (val_str != node->const_value_raw.value()) {
       errors.push_back({error_code::const_mismatch, path,
                         "value does not match const"});
@@ -891,7 +957,7 @@ static void validate_node(const schema_node_ptr& node,
       std::set<std::string> seen;
       bool has_dup = false;
       for (auto item : arr) {
-        auto s = std::string(minify(item));
+        auto s = canonical_json(item);
         if (!seen.insert(s).second) {
           has_dup = true;
           break;
@@ -1257,7 +1323,7 @@ static bool cg_exec(const cg::plan& p, const std::vector<cg::ins>& code,
     case cg::op::CHECK_FORMAT: if(t=="string"){std::string_view sv;value.get(sv);uint8_t f=p.format_ids[c.a];if(f<9&&!check_format(sv,fmt_names[f]))return false;} break;
     case cg::op::CHECK_MIN_ITEMS: if(t=="array"){dom::array a;value.get(a);uint64_t s=0;for([[maybe_unused]]auto _:a)++s;if(s<c.a)return false;} break;
     case cg::op::CHECK_MAX_ITEMS: if(t=="array"){dom::array a;value.get(a);uint64_t s=0;for([[maybe_unused]]auto _:a)++s;if(s>c.a)return false;} break;
-    case cg::op::CHECK_UNIQUE_ITEMS: if(t=="array"){dom::array a;value.get(a);std::set<std::string> seen;for(auto x:a)if(!seen.insert(std::string(minify(x))).second)return false;} break;
+    case cg::op::CHECK_UNIQUE_ITEMS: if(t=="array"){dom::array a;value.get(a);std::set<std::string> seen;for(auto x:a)if(!seen.insert(canonical_json(x)).second)return false;} break;
     case cg::op::ARRAY_ITEMS: if(t=="array"){dom::array a;value.get(a);for(auto x:a)if(!cg_exec(p,p.subs[c.a],x))return false;} break;
     case cg::op::CHECK_REQUIRED: if(t=="object"){dom::object o;value.get(o);dom::element d;if(o[p.strings[c.a]].get(d)!=SUCCESS)return false;} break;
     case cg::op::CHECK_MIN_PROPS: if(t=="object"){dom::object o;value.get(o);uint64_t n=0;for([[maybe_unused]]auto _:o)++n;if(n<c.a)return false;} break;
@@ -1283,17 +1349,17 @@ static bool cg_exec(const cg::plan& p, const std::vector<cg::ins>& code,
     case cg::op::CHECK_ENUM_STR: {
       auto& es=p.enum_sets[c.a]; bool f=false;
       if(t=="string"){std::string_view sv;value.get(sv);for(auto& e:es)if(e.size()==sv.size()+2&&e[0]=='"'&&e.back()=='"'&&e.compare(1,sv.size(),sv)==0){f=true;break;}}
-      if(!f){std::string v=std::string(minify(value));for(auto& e:es)if(e==v){f=true;break;}}
+      if(!f){std::string v=canonical_json(value);for(auto& e:es)if(e==v){f=true;break;}}
       if(!f)return false; break;
     }
     case cg::op::CHECK_ENUM: {
       auto& es=p.enum_sets[c.a]; bool f=false;
       if(t=="string"){std::string_view sv;value.get(sv);for(auto& e:es)if(e.size()==sv.size()+2&&e[0]=='"'&&e.back()=='"'&&e.compare(1,sv.size(),sv)==0){f=true;break;}}
       if(!f&&value.is<int64_t>()){int64_t v;value.get(v);auto s=std::to_string(v);for(auto& e:es)if(e==s){f=true;break;}}
-      if(!f){std::string v=std::string(minify(value));for(auto& e:es)if(e==v){f=true;break;}}
+      if(!f){std::string v=canonical_json(value);for(auto& e:es)if(e==v){f=true;break;}}
       if(!f)return false; break;
     }
-    case cg::op::CHECK_CONST: if(std::string(minify(value))!=p.strings[c.a])return false; break;
+    case cg::op::CHECK_CONST: if(canonical_json(value)!=p.strings[c.a])return false; break;
     case cg::op::COMPOSITION: return false; // fallback to tree walker
     }
   }
