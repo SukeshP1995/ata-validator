@@ -12,6 +12,7 @@
     "test": "node test.js",
     "test:suite": "node tests/run_suite.js",
     "test:compat": "node tests/test_compat.js",
+    "test:standard-schema": "node tests/test_standard_schema.js",
     "bench": "node benchmark/bench_large.js"
   },
   "keywords": [
@@ -25,16 +26,18 @@
     "simdjson",
     "napi",
     "ajv",
-    "ajv-alternative"
+    "ajv-alternative",
+    "standard-schema",
+    "fastify"
   ],
   "author": "Mert Can Altin <mertcanaltin01@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mertcanaltin/ata.git"
+    "url": "git+https://github.com/mertcanaltin/ata-validator.git"
   },
   "bugs": {
-    "url": "https://github.com/mertcanaltin/ata/issues"
+    "url": "https://github.com/mertcanaltin/ata-validator/issues"
   },
   "homepage": "https://github.com/mertcanaltin/ata#readme",
   "engines": {
