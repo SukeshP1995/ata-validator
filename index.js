@@ -266,16 +266,17 @@ class Validator {
             try {
               const obj = JSON.parse(jsonStr);
               if (jsFn(obj)) return VALID_RESULT;
+              return errFn(obj);
             } catch (e) {
               if (!(e instanceof SyntaxError)) throw e;
             }
             return compiled.validateJSON(jsonStr);
           }
         : (jsonStr) => {
-            // Non-selective schema: JSON.parse + jsFn always wins
             try {
               const obj = JSON.parse(jsonStr);
               if (jsFn(obj)) return VALID_RESULT;
+              return errFn(obj);
             } catch (e) {
               if (!(e instanceof SyntaxError)) throw e;
             }
