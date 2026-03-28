@@ -1,0 +1,231 @@
+# ata-validator API
+
+## Validator
+
+```javascript
+const { Validator } = require('ata-validator');
+```
+
+### new Validator(schema, options?)
+
+Creates a validator instance. Does not compile anything until first use (lazy compilation).
+
+```javascript
+const v = new Validator({
+  type: 'object',
+  properties: {
+    name: { type: 'string' },
+    age: { type: 'integer', minimum: 0 }
+  },
+  required: ['name']
+});
+```
+
+**Options:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `coerceTypes` | boolean | false | Convert types in-place. `"42"` becomes `42` for integer fields. |
+| `removeAdditional` | boolean | false | Remove properties not defined in schema. |
+
+### v.validate(data)
+
+Validates data. Applies defaults, coercion, and removal if configured. Returns a result object.
+
+```javascript
+const result = v.validate({ name: 'Mert', age: 26 });
+
+// Valid:
+// { valid: true, errors: [] }
+
+// Invalid:
+// {
+//   valid: false,
+//   errors: [
+//     { code: 'type_mismatch', path: '/age', message: 'expected integer' },
+//     { code: 'required_missing', path: '/name', message: 'missing: name' }
+//   ]
+// }
+```
+
+**Error codes:**
+- `type_mismatch` - wrong type
+- `required_missing` - required property missing
+- `minimum_violation` / `maximum_violation` - number out of range
+- `min_length_violation` / `max_length_violation` - string length out of range
+- `pattern_mismatch` - string doesn't match pattern
+- `format_mismatch` - string doesn't match format (email, date, etc.)
+- `enum_mismatch` - value not in enum
+- `const_mismatch` - value doesn't match const
+- `unique_items_violation` - duplicate items in array
+- `additional_property` - property not defined in schema
+- `min_items_violation` / `max_items_violation` - array length out of range
+
+### v.isValidObject(data)
+
+Boolean-only check. Fastest path, no error details, no defaults/coercion.
+
+```javascript
+v.isValidObject({ name: 'Mert', age: 26 }); // true
+v.isValidObject({ name: 123 }); // false
+```
+
+### v.validateJSON(jsonString)
+
+Validates a JSON string. Uses simdjson for large documents (>8KB).
+
+```javascript
+const result = v.validateJSON('{"name": "Mert", "age": 26}');
+// { valid: true, errors: [] }
+```
+
+### v.isValidJSON(jsonString)
+
+Boolean-only check on JSON string.
+
+```javascript
+v.isValidJSON('{"name": "Mert"}'); // true
+```
+
+### v.isValid(buffer)
+
+Raw NAPI path for Buffer/Uint8Array input. No JS parsing, goes straight to C++.
+
+```javascript
+v.isValid(Buffer.from('{"name": "Mert"}')); // true
+```
+
+### v.isValidParallel(ndjsonBuffer)
+
+Multi-core parallel validation of NDJSON (newline-delimited JSON). Returns array of booleans.
+
+```javascript
+const ndjson = Buffer.from('{"name":"a"}\n{"name":"b"}\n{"bad":1}');
+v.isValidParallel(ndjson); // [true, true, false]
+```
+
+### v.countValid(ndjsonBuffer)
+
+Counts valid documents in NDJSON buffer. Single number return, fastest batch path.
+
+```javascript
+v.countValid(ndjson); // 2
+```
+
+### v.isValidNDJSON(ndjsonBuffer)
+
+Single-thread NDJSON batch validation. Returns array of booleans.
+
+### v.isValidPrepadded(paddedBuffer, jsonLength)
+
+Zero-copy path for pre-padded buffers (simdjson requires 64 bytes padding).
+
+## Standalone Pre-compilation
+
+Skip compilation at startup by saving compiled validators to disk.
+
+### v.toStandalone()
+
+Returns JS module source string.
+
+```javascript
+const source = v.toStandalone();
+fs.writeFileSync('./compiled.js', source);
+```
+
+### Validator.fromStandalone(module, schema, options?)
+
+Loads a pre-compiled validator. No native addon needed.
+
+```javascript
+const v = Validator.fromStandalone(require('./compiled.js'), schema);
+```
+
+### Validator.bundle(schemas, options?)
+
+Bundles multiple schemas into a single JS file.
+
+```javascript
+const bundle = Validator.bundle([schema1, schema2, schema3]);
+fs.writeFileSync('./validators.js', bundle);
+```
+
+### Validator.bundleCompact(schemas, options?)
+
+Deduplicated bundle. Identical function bodies are shared.
+
+```javascript
+const bundle = Validator.bundleCompact(schemas);
+// 5 schema types across 500 routes -> 17KB vs 3.6MB without dedup
+```
+
+### Validator.loadBundle(modules, schemas, options?)
+
+Loads a bundle.
+
+```javascript
+const validators = Validator.loadBundle(require('./validators.js'), schemas);
+validators[0].validate(data);
+```
+
+## Standard Schema V1
+
+ata-validator implements the [Standard Schema](https://github.com/standard-schema/standard-schema) interface.
+
+```javascript
+const v = new Validator(schema);
+const result = v['~standard'].validate(data);
+
+// Valid:   { value: data }
+// Invalid: { issues: [{ message: 'expected string', path: [{ key: 'name' }] }] }
+```
+
+Works with Fastify v5, tRPC, TanStack Form, Drizzle ORM.
+
+## Utility Functions
+
+### validate(schema, data)
+
+One-shot validation without creating a Validator instance. Uses native C++ path.
+
+```javascript
+const { validate } = require('ata-validator');
+const result = validate({ type: 'string' }, 'hello');
+```
+
+### createPaddedBuffer(jsonString)
+
+Creates a simdjson-compatible padded buffer.
+
+```javascript
+const { createPaddedBuffer, SIMDJSON_PADDING } = require('ata-validator');
+const { buffer, length } = createPaddedBuffer('{"name": "Mert"}');
+v.isValidPrepadded(buffer, length);
+```
+
+## Lazy Compilation
+
+ata uses three-tier lazy compilation:
+
+1. **Constructor** - stores schema only, no compilation (~0.5us)
+2. **First validate()** - compiles codegen + combined validator
+3. **First isValidObject()** - compiles only boolean codegen (faster)
+
+Same schema string reuses compiled functions from cache. Second `new Validator(sameSchema)` skips compilation entirely.
+
+## Supported Formats
+
+Hand-written parsers, no regex:
+
+| Format | Example |
+|--------|---------|
+| `email` | `user@example.com` |
+| `date` | `2026-03-28` |
+| `date-time` | `2026-03-28T12:00:00Z` |
+| `time` | `12:00:00` |
+| `uri` | `https://example.com` |
+| `uri-reference` | `/path/to/resource` |
+| `ipv4` | `192.168.1.1` |
+| `ipv6` | `::1` |
+| `uuid` | `550e8400-e29b-41d4-a716-446655440000` |
+| `hostname` | `example.com` |
