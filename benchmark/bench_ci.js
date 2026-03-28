@@ -1,7 +1,12 @@
 'use strict'
 
-// CI pipeline simulation: process starts cold, compiles schemas, runs validations, exits.
-// Measures total wall time from require() to last validation.
+// CI pipeline simulation: cold process, compile schemas, run validations.
+// Measured with mitata for process isolation.
+
+const { bench, group, run, summary, do_not_optimize } = require('mitata')
+const { Validator } = require('../index')
+const Ajv = require('./node_modules/ajv')
+const addFormats = require('./node_modules/ajv-formats')
 
 const schemas = [
   { type: 'object', properties: { id: { type: 'integer', minimum: 1 }, name: { type: 'string', minLength: 1, maxLength: 100 }, email: { type: 'string', format: 'email' }, active: { type: 'boolean' } }, required: ['id', 'name', 'email'] },
@@ -20,74 +25,50 @@ const testData = [
 ]
 
 function runAta(schemaCount, validationsPerSchema) {
-  const { Validator } = require('../index')
-  const start = performance.now()
-
   const validators = []
   for (let i = 0; i < schemaCount; i++) {
     validators.push(new Validator(schemas[i % schemas.length]))
   }
-
-  let validCount = 0
-  let invalidCount = 0
   for (let i = 0; i < schemaCount; i++) {
     const data = testData[i % testData.length]
     for (let j = 0; j < validationsPerSchema; j++) {
-      const r1 = validators[i].validate(data.valid)
-      if (r1.valid) validCount++
-      const r2 = validators[i].validate(data.invalid)
-      if (!r2.valid) invalidCount++
+      do_not_optimize(validators[i].validate(data.valid))
+      do_not_optimize(validators[i].validate(data.invalid))
     }
   }
-
-  return { elapsed: performance.now() - start, validCount, invalidCount }
 }
 
 function runAjv(schemaCount, validationsPerSchema) {
-  const Ajv = require('./node_modules/ajv')
-  const addFormats = require('./node_modules/ajv-formats')
-  const start = performance.now()
-
   const ajv = new Ajv({ allErrors: true })
   addFormats(ajv)
-
   const validators = []
   for (let i = 0; i < schemaCount; i++) {
     validators.push(ajv.compile(schemas[i % schemas.length]))
   }
-
-  let validCount = 0
-  let invalidCount = 0
   for (let i = 0; i < schemaCount; i++) {
     const data = testData[i % testData.length]
     for (let j = 0; j < validationsPerSchema; j++) {
-      const r1 = validators[i](data.valid)
-      if (r1) validCount++
-      const r2 = validators[i](data.invalid)
-      if (!r2) invalidCount++
+      do_not_optimize(validators[i](data.valid))
+      do_not_optimize(validators[i](data.invalid))
     }
   }
-
-  return { elapsed: performance.now() - start, validCount, invalidCount }
 }
 
-console.log('==========================================================')
-console.log('  CI Pipeline Simulation: require + compile + validate')
-console.log('==========================================================\n')
+summary(() => {
+  group('CI: 5 schemas, 100 validations each', () => {
+    bench('ata', () => runAta(5, 100))
+    bench('ajv', () => runAjv(5, 100))
+  })
 
-const scenarios = [
-  { schemas: 5, validations: 100, label: 'small test suite (5 schemas, 100 validations each)' },
-  { schemas: 20, validations: 500, label: 'medium test suite (20 schemas, 500 validations each)' },
-  { schemas: 50, validations: 1000, label: 'large test suite (50 schemas, 1000 validations each)' },
-]
+  group('CI: 20 schemas, 500 validations each', () => {
+    bench('ata', () => runAta(20, 500))
+    bench('ajv', () => runAjv(20, 500))
+  })
 
-for (const s of scenarios) {
-  const ata = runAta(s.schemas, s.validations)
-  const ajv = runAjv(s.schemas, s.validations)
-  const ratio = ajv.elapsed / ata.elapsed
+  group('CI: 50 schemas, 1000 validations each', () => {
+    bench('ata', () => runAta(50, 1000))
+    bench('ajv', () => runAjv(50, 1000))
+  })
+})
 
-  console.log(`  ${s.label}:`)
-  console.log(`    ata: ${ata.elapsed.toFixed(2)}ms (${ata.validCount + ata.invalidCount} validations)`)
-  console.log(`    ajv: ${ajv.elapsed.toFixed(2)}ms (${ajv.validCount + ajv.invalidCount} validations)`)
-  console.log(`    ata is ${ratio.toFixed(1)}x faster\n`)
-}
+run()
