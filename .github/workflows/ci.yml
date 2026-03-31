@@ -67,6 +67,8 @@ jobs:
             mingw-w64-clang-x86_64-ninja
             mingw-w64-clang-x86_64-toolchain
             mingw-w64-clang-x86_64-nodejs
+            mingw-w64-clang-x86_64-re2
+            mingw-w64-clang-x86_64-abseil-cpp
             git
             base-devel
 
