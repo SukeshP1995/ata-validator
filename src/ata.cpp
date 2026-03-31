@@ -18,6 +18,29 @@
 #include <unistd.h>
 #endif
 
+// MSVC implementation by Pavel P (https://gist.github.com/pps83/3210a2f980fd02bb2ba2e5a1fc4a2ef0)
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+
+#define __builtin_popcount __popcnt
+#define __builtin_popcountll __popcnt64
+
+static inline int __builtin_popcountl(unsigned long x) {
+  return sizeof(x) == 8 ? __popcnt64(x) : __popcnt((unsigned)x);
+}
+
+#endif // defined(_MSC_VER) && !defined(__clang__)
+
+#define popcount(x) _Generic((x) \
+  , unsigned: __builtin_popcount \
+  , unsigned char: __builtin_popcount \
+  , int: __builtin_popcount \
+  , unsigned long: __builtin_popcountl \
+  , long: __builtin_popcountl \
+  , unsigned long long: __builtin_popcountll \
+  , long long: __builtin_popcountll \
+  )(x)
+
 #include "simdjson.h"
 
 // --- Fast format validators (no std::regex) ---
@@ -1569,7 +1592,7 @@ static void cg_compile(const schema_node* n, cg::plan& p,
   }
   // Type
   if (n->type_mask) {
-    int popcount = __builtin_popcount(n->type_mask);
+    int popcount = popcount(n->type_mask);
     if (popcount == 1) {
       // Single type — emit specific opcode
       for (int b = 0; b < 7; ++b) {
