@@ -44,6 +44,51 @@ jobs:
       - name: Run Standard Schema tests
         run: npm run test:standard-schema
 
+  test-windows-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022]
+        node: [22]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSYS2 (UCRT64) with Node.js
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-nodejs
+            git
+            base-devel
+
+      - name: Create .npmrc with token
+        run: |
+          echo "cmake_js_G=Ninja" > .npmrc
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build native addon
+        run: npm run build
+
+      - name: Run Node.js tests
+        run: npm test
+
+      - name: Run compat tests
+        run: npm run test:compat
+
+      - name: Run Standard Schema tests
+        run: npm run test:standard-schema
+
   test-cpp:
     runs-on: ubuntu-latest
     steps:
