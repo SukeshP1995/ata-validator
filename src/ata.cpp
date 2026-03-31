@@ -1569,7 +1569,7 @@ static void cg_compile(const schema_node* n, cg::plan& p,
   }
   // Type
   if (n->type_mask) {
-    int popcount = __builtin_popcount(n->type_mask);
+    int popcount = std::popcount(n->type_mask);
     if (popcount == 1) {
       // Single type — emit specific opcode
       for (int b = 0; b < 7; ++b) {
