@@ -72,7 +72,7 @@ jobs:
 
       - name: Create .npmrc with token
         run: |
-          echo "cmake_js_G=Ninja" > .npmrc
+          echo "cmake_js_G=MinGW Makefiles" > .npmrc
 
       - name: Install dependencies
         run: npm install
