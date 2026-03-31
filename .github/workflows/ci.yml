@@ -57,16 +57,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup MSYS2 (UCRT64) with Node.js
+      - name: Setup MSYS2 (clang64) with Node.js
         uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          msystem: clang64
           update: true
           install: >-
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-nodejs
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-toolchain
+            mingw-w64-clang-x86_64-nodejs
             git
             base-devel
 
