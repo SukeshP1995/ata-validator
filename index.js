@@ -443,12 +443,16 @@ class Validator {
         } catch {}
       }
       // errFn: use JS codegen if safe, else lazy-native fallback
+      // For unevaluated schemas without errFn, use jsFn as boolean-only fallback
+      const hasUnevaluated = schemaObj && JSON.stringify(schemaObj).includes('unevaluatedProperties') || JSON.stringify(schemaObj).includes('unevaluatedItems')
       const errFn =
         safeErrFn ||
-        ((d) => {
-          this._ensureNative();
-          return this._compiled.validate(d);
-        });
+        (hasUnevaluated
+          ? (d) => ({ valid: jsFn(d), errors: jsFn(d) ? [] : [{ code: 'unevaluated', path: '', message: 'unevaluated property or item' }] })
+          : (d) => {
+              this._ensureNative();
+              return this._compiled.validate(d);
+            });
 
       // Best path: combined validator (single pass, validates + collects errors)
       // Valid data: returns VALID_RESULT, no allocation
