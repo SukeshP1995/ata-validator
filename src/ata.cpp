@@ -367,11 +367,15 @@ struct od_plan {
   re2::RE2* pattern = nullptr;        // borrowed pointer from schema_node
   uint8_t format_id = 255;            // 255 = no format check
 
-  // Object — single iterate: required + properties + additional + count
-  struct obj_prop { std::string key; std::shared_ptr<od_plan> sub; };
+  // Object — single iterate with merged required+property lookup
+  struct prop_entry {
+    std::string key;
+    int required_idx = -1;            // bit index for required tracking, or -1
+    std::shared_ptr<od_plan> sub;     // property sub-plan, or nullptr
+  };
   struct obj_plan {
-    std::vector<std::string> required;
-    std::vector<obj_prop> properties;
+    std::vector<prop_entry> entries;  // merged required + properties — single scan
+    size_t required_count = 0;
     bool no_additional = false;
     std::optional<uint64_t> min_props, max_props;
   };
@@ -2001,22 +2005,41 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
   plan->pattern = node->compiled_pattern.get();
   plan->format_id = node->format_id;
 
-  // Object plan
+  // Object plan — build hash lookup for O(1) per-field dispatch
   if (!node->properties.empty() || !node->required.empty() ||
       node->additional_properties_bool.has_value() ||
       node->min_properties.has_value() || node->max_properties.has_value()) {
     auto op = std::make_shared<od_plan::obj_plan>();
-    op->required = node->required;
+    op->required_count = node->required.size();
     op->min_props = node->min_properties;
     op->max_props = node->max_properties;
     if (node->additional_properties_bool.has_value() &&
         !node->additional_properties_bool.value()) {
       op->no_additional = true;
     }
+    // Build merged entries: each key appears once with required_idx + sub_plan
+    std::unordered_map<std::string, size_t> key_to_idx;
+    // Register required keys
+    for (size_t i = 0; i < node->required.size() && i < 64; i++) {
+      auto& rk = node->required[i];
+      if (key_to_idx.find(rk) == key_to_idx.end()) {
+        key_to_idx[rk] = op->entries.size();
+        op->entries.push_back({rk, static_cast<int>(i), nullptr});
+      } else {
+        op->entries[key_to_idx[rk]].required_idx = static_cast<int>(i);
+      }
+    }
+    // Register properties + compile sub-plans
     for (auto& [key, sub_node] : node->properties) {
       auto sub = compile_od_plan(sub_node);
       if (!sub || !sub->supported) { plan->supported = false; return plan; }
-      op->properties.push_back({key, std::move(sub)});
+      auto it = key_to_idx.find(key);
+      if (it != key_to_idx.end()) {
+        op->entries[it->second].sub = std::move(sub);
+      } else {
+        key_to_idx[key] = op->entries.size();
+        op->entries.push_back({key, -1, std::move(sub)});
+      }
     }
     plan->object = std::move(op);
   }
@@ -2096,24 +2119,26 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
       std::string_view key = field.unescaped_key();
       prop_count++;
 
-      for (size_t i = 0; i < op.required.size() && i < 64; i++) {
-        if (key == op.required[i]) required_found |= (1ULL << i);
-      }
-
+      // Single merged scan: required + property in one pass
       bool matched = false;
-      for (auto& prop : op.properties) {
-        if (key == prop.key) {
-          simdjson::ondemand::value fv;
-          if (field.value().get(fv) != SUCCESS) return false;
-          if (!od_exec_plan(*prop.sub, fv)) return false;
-          matched = true; break;
+      for (auto& e : op.entries) {
+        if (key == e.key) {
+          if (e.required_idx >= 0)
+            required_found |= (1ULL << e.required_idx);
+          if (e.sub) {
+            simdjson::ondemand::value fv;
+            if (field.value().get(fv) != SUCCESS) return false;
+            if (!od_exec_plan(*e.sub, fv)) return false;
+          }
+          matched = true;
+          break;
         }
       }
       if (!matched && op.no_additional) return false;
     }
 
-    uint64_t required_mask = (op.required.size() >= 64)
-        ? ~0ULL : ((1ULL << op.required.size()) - 1);
+    uint64_t required_mask = (op.required_count >= 64)
+        ? ~0ULL : ((1ULL << op.required_count) - 1);
     if ((required_found & required_mask) != required_mask) return false;
     if (op.min_props && prop_count < *op.min_props) return false;
     if (op.max_props && prop_count > *op.max_props) return false;
