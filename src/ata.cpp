@@ -357,10 +357,12 @@ struct plan {
 struct od_plan {
   uint8_t type_mask = 0;
 
-  // Numeric — single value.get() then all checks
-  std::optional<double> minimum, maximum;
-  std::optional<double> exclusive_minimum, exclusive_maximum;
-  std::optional<double> multiple_of;
+  // Numeric — bitmask for which checks to run + flat array of bounds
+  enum num_flag : uint8_t {
+    HAS_MIN = 1, HAS_MAX = 2, HAS_EX_MIN = 4, HAS_EX_MAX = 8, HAS_MUL = 16
+  };
+  uint8_t num_flags = 0;
+  double num_min = 0, num_max = 0, num_ex_min = 0, num_ex_max = 0, num_mul = 0;
 
   // String — single value.get(sv) then all checks
   std::optional<uint64_t> min_length, max_length;
@@ -1995,11 +1997,11 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
   }
 
   plan->type_mask = node->type_mask;
-  plan->minimum = node->minimum;
-  plan->maximum = node->maximum;
-  plan->exclusive_minimum = node->exclusive_minimum;
-  plan->exclusive_maximum = node->exclusive_maximum;
-  plan->multiple_of = node->multiple_of;
+  if (node->minimum) { plan->num_flags |= od_plan::HAS_MIN; plan->num_min = *node->minimum; }
+  if (node->maximum) { plan->num_flags |= od_plan::HAS_MAX; plan->num_max = *node->maximum; }
+  if (node->exclusive_minimum) { plan->num_flags |= od_plan::HAS_EX_MIN; plan->num_ex_min = *node->exclusive_minimum; }
+  if (node->exclusive_maximum) { plan->num_flags |= od_plan::HAS_EX_MAX; plan->num_ex_max = *node->exclusive_maximum; }
+  if (node->multiple_of) { plan->num_flags |= od_plan::HAS_MUL; plan->num_mul = *node->multiple_of; }
   plan->min_length = node->min_length;
   plan->max_length = node->max_length;
   plan->pattern = node->compiled_pattern.get();
@@ -2059,41 +2061,85 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
   return plan;
 }
 
+// Fast ASCII check: if all bytes < 0x80, byte length == codepoint length
+static inline uint64_t utf8_length_fast(std::string_view s) {
+  // Check 8 bytes at a time for non-ASCII
+  const uint8_t* p = reinterpret_cast<const uint8_t*>(s.data());
+  size_t n = s.size();
+  size_t i = 0;
+  uint64_t has_high = 0;
+  for (; i + 8 <= n; i += 8) {
+    uint64_t block;
+    std::memcpy(&block, p + i, 8);
+    has_high |= block & 0x8080808080808080ULL;
+  }
+  for (; i < n; i++) has_high |= p[i] & 0x80;
+  if (has_high == 0) return n;  // Pure ASCII — byte count == codepoint count
+  return utf8_length(s);        // Fallback to full counting
+}
+
 // Execute an od_plan against a simdjson On-Demand value.
-// Each value consumed exactly once — no double .get() calls.
+// Each value consumed exactly once. Uses simdjson types directly — no od_type() overhead.
 static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
-  auto t = od_type(value);
+  // Use simdjson type directly — skip od_type() conversion + get_number_type()
+  using sjt = simdjson::ondemand::json_type;
+  sjt st;
+  if (value.type().get(st) != SUCCESS) return false;
+
+  // Type check using simdjson type directly
   if (plan.type_mask) {
-    uint8_t tbits = json_type_bit(t);
-    if (t == json_type::integer) tbits |= json_type_bit(json_type::number);
+    uint8_t tbits;
+    switch (st) {
+      case sjt::string:  tbits = json_type_bit(json_type::string); break;
+      case sjt::boolean: tbits = json_type_bit(json_type::boolean); break;
+      case sjt::null:    tbits = json_type_bit(json_type::null_value); break;
+      case sjt::object:  tbits = json_type_bit(json_type::object); break;
+      case sjt::array:   tbits = json_type_bit(json_type::array); break;
+      case sjt::number:
+        // Only call get_number_type when schema has type constraint that distinguishes int/number
+        tbits = json_type_bit(json_type::number) | json_type_bit(json_type::integer);
+        if ((plan.type_mask & tbits) != tbits) {
+          // Schema distinguishes — need to check actual number type
+          simdjson::ondemand::number_type nt;
+          if (value.get_number_type().get(nt) == SUCCESS &&
+              nt != simdjson::ondemand::number_type::floating_point_number)
+            tbits = json_type_bit(json_type::integer) | json_type_bit(json_type::number);
+          else
+            tbits = json_type_bit(json_type::number);
+        }
+        break;
+      default: tbits = 0;
+    }
     if (!(tbits & plan.type_mask)) return false;
   }
 
-  switch (t) {
-  case json_type::integer:
-  case json_type::number: {
+  switch (st) {
+  case sjt::number: {
+    if (!plan.num_flags) break;  // No numeric constraints
     double v;
-    if (t == json_type::integer) {
-      int64_t iv; if (value.get(iv) != SUCCESS) return false;
+    // Try integer first (more common), fall back to double
+    int64_t iv;
+    if (value.get(iv) == SUCCESS) {
       v = static_cast<double>(iv);
-    } else {
-      if (value.get(v) != SUCCESS) return false;
+    } else if (value.get(v) != SUCCESS) {
+      return false;
     }
-    if (plan.minimum && v < *plan.minimum) return false;
-    if (plan.maximum && v > *plan.maximum) return false;
-    if (plan.exclusive_minimum && v <= *plan.exclusive_minimum) return false;
-    if (plan.exclusive_maximum && v >= *plan.exclusive_maximum) return false;
-    if (plan.multiple_of) {
-      double r = std::fmod(v, *plan.multiple_of);
-      if (std::abs(r) > 1e-8 && std::abs(r - *plan.multiple_of) > 1e-8) return false;
+    uint8_t f = plan.num_flags;
+    if ((f & od_plan::HAS_MIN) && v < plan.num_min) return false;
+    if ((f & od_plan::HAS_MAX) && v > plan.num_max) return false;
+    if ((f & od_plan::HAS_EX_MIN) && v <= plan.num_ex_min) return false;
+    if ((f & od_plan::HAS_EX_MAX) && v >= plan.num_ex_max) return false;
+    if (f & od_plan::HAS_MUL) {
+      double r = std::fmod(v, plan.num_mul);
+      if (std::abs(r) > 1e-8 && std::abs(r - plan.num_mul) > 1e-8) return false;
     }
     break;
   }
-  case json_type::string: {
+  case sjt::string: {
     std::string_view sv;
     if (value.get(sv) != SUCCESS) return false;
     if (plan.min_length || plan.max_length) {
-      uint64_t len = utf8_length(sv);
+      uint64_t len = utf8_length_fast(sv);
       if (plan.min_length && len < *plan.min_length) return false;
       if (plan.max_length && len > *plan.max_length) return false;
     }
@@ -2106,7 +2152,7 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
     }
     break;
   }
-  case json_type::object: {
+  case sjt::object: {
     if (!plan.object) break;
     auto& op = *plan.object;
     simdjson::ondemand::object obj;
@@ -2144,7 +2190,7 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
     if (op.max_props && prop_count > *op.max_props) return false;
     break;
   }
-  case json_type::array: {
+  case sjt::array: {
     if (!plan.array) break;
     auto& ap = *plan.array;
     simdjson::ondemand::array arr;
@@ -2161,8 +2207,7 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
     if (ap.max_items && count > *ap.max_items) return false;
     break;
   }
-  case json_type::boolean:
-  case json_type::null_value:
+  default:
     break;
   }
 
