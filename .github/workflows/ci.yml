@@ -44,8 +44,8 @@ jobs:
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
         run: |
-          C:\vcpkg\vcpkg install re2:x64-windows-static
-          C:\vcpkg\vcpkg install abseil:x64-windows-static
+          C:\vcpkg\vcpkg install re2:x64-windows-static --triplet x64-windows
+          C:\vcpkg\vcpkg install abseil:x64-windows-static --triplet x64-windows
         shell: cmd
 
       - name: Install dependencies
