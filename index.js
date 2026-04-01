@@ -1,4 +1,7 @@
-const native = require("node-gyp-build")(__dirname);
+// Native addon: optional. Core validate() uses JS codegen and works without it.
+// Buffer APIs (isValid, countValid, isValidParallel) require native.
+let native;
+try { native = require("node-gyp-build")(__dirname); } catch {}
 const {
   compileToJS,
   compileToJSCodegen,
@@ -347,14 +350,17 @@ class Validator {
       return this.isValidJSON(jsonStr);
     };
     this.isValid = (buf) => {
+      if (!native) throw new Error('Native addon required for isValid() — use validate() or isValidObject() instead');
       this._ensureCompiled();
       return this.isValid(buf);
     };
     this.countValid = (ndjsonBuf) => {
+      if (!native) throw new Error('Native addon required for countValid()');
       this._ensureCompiled();
       return this.countValid(ndjsonBuf);
     };
     this.batchIsValid = (buffers) => {
+      if (!native) throw new Error('Native addon required for batchIsValid()');
       this._ensureCompiled();
       return this.batchIsValid(buffers);
     };
@@ -533,7 +539,7 @@ class Validator {
       const jsonValidateFn = safeCombinedFn
         || hybridFn
         || ((obj) => (jsFn(obj) ? VALID_RESULT : errFn(obj)));
-      this.validateJSON = useSimdjsonForLarge
+      this.validateJSON = useSimdjsonForLarge && native
         ? (jsonStr) => {
             if (jsonStr.length >= SIMDJSON_THRESHOLD) {
               this._ensureNative();
@@ -555,11 +561,12 @@ class Validator {
               return jsonValidateFn(JSON.parse(jsonStr));
             } catch (e) {
               if (!(e instanceof SyntaxError)) throw e;
+              if (!native) return { valid: false, errors: [{ keyword: 'syntax', instancePath: '', schemaPath: '#', params: {}, message: e.message }] };
             }
             this._ensureNative();
             return this._compiled.validateJSON(jsonStr);
           };
-      this.isValidJSON = useSimdjsonForLarge
+      this.isValidJSON = useSimdjsonForLarge && native
         ? (jsonStr) => {
             if (jsonStr.length >= SIMDJSON_THRESHOLD) {
               this._ensureNative();
@@ -584,35 +591,37 @@ class Validator {
             }
           };
       // V8 CFunction ultra-fast path — zero NAPI overhead for buffer validation
-      this._ensureNative();
-      {
-        const slot = this._fastSlot;
-        this.isValid = (buf) => {
-          if (typeof buf === 'string') buf = Buffer.from(buf);
-          return native.rawFastValidate(slot, buf);
-        };
+      if (native) {
+        this._ensureNative();
+        {
+          const slot = this._fastSlot;
+          this.isValid = (buf) => {
+            if (typeof buf === 'string') buf = Buffer.from(buf);
+            return native.rawFastValidate(slot, buf);
+          };
+        }
+        {
+          const slot = this._fastSlot;
+          this.countValid = (ndjsonBuf) => {
+            if (typeof ndjsonBuf === 'string') ndjsonBuf = Buffer.from(ndjsonBuf);
+            const results = native.rawNDJSONValidate(slot, ndjsonBuf);
+            let count = 0;
+            for (let i = 0; i < results.length; i++) if (results[i]) count++;
+            return count;
+          };
+        }
+        {
+          const slot = this._fastSlot;
+          this.batchIsValid = (buffers) => {
+            let valid = 0;
+            for (const buf of buffers) {
+              if (native.rawFastValidate(slot, buf)) valid++;
+            }
+            return valid;
+          };
+        }
       }
-      {
-        const slot = this._fastSlot;
-        this.countValid = (ndjsonBuf) => {
-          if (typeof ndjsonBuf === 'string') ndjsonBuf = Buffer.from(ndjsonBuf);
-          const results = native.rawNDJSONValidate(slot, ndjsonBuf);
-          let count = 0;
-          for (let i = 0; i < results.length; i++) if (results[i]) count++;
-          return count;
-        };
-      }
-      {
-        const slot = this._fastSlot;
-        this.batchIsValid = (buffers) => {
-          let valid = 0;
-          for (const buf of buffers) {
-            if (native.rawFastValidate(slot, buf)) valid++;
-          }
-          return valid;
-        };
-      }
-    } else {
+    } else if (native) {
       // ATA_FORCE_NAPI path: no JS codegen, use native for everything
       this._ensureNative();
       this.validate = preprocess
@@ -657,6 +666,7 @@ class Validator {
   _ensureNative() {
     if (this._nativeReady) return;
     this._nativeReady = true;
+    if (!native) return;
     let nativeSchemaStr = this._schemaStr;
     if (this._schemaMap.size > 0) {
       const merged = JSON.parse(this._schemaStr);
@@ -853,43 +863,54 @@ module.exports = { boolFn, hybridFactory, errFn };
 
   // Raw NAPI fast path for Buffer/Uint8Array
   isValid(input) {
+    if (!native) throw new Error('Native addon required for isValid() — install build tools or use validate() instead');
     this._ensureNative();
     return native.rawFastValidate(this._fastSlot, input);
   }
 
   // Zero-copy pre-padded path
   isValidPrepadded(paddedBuffer, jsonLength) {
+    if (!native) throw new Error('Native addon required for isValidPrepadded()');
     this._ensureNative();
     return native.rawFastValidate(this._fastSlot, paddedBuffer, jsonLength);
   }
 
   // Parallel NDJSON batch (multi-core)
   isValidParallel(buffer) {
+    if (!native) throw new Error('Native addon required for isValidParallel()');
     this._ensureNative();
     return native.rawParallelValidate(this._fastSlot, buffer);
   }
 
   // Parallel count (fastest -- single uint32 return)
   countValid(buffer) {
+    if (!native) throw new Error('Native addon required for countValid()');
     this._ensureNative();
     return native.rawParallelCount(this._fastSlot, buffer);
   }
 
   // NDJSON single-thread batch
   isValidNDJSON(buffer) {
+    if (!native) throw new Error('Native addon required for isValidNDJSON()');
     this._ensureNative();
     return native.rawNDJSONValidate(this._fastSlot, buffer);
   }
 }
 
 function validate(schema, data) {
-  const schemaStr =
-    typeof schema === "string" ? schema : JSON.stringify(schema);
-  return native.validate(schemaStr, data);
+  if (native) {
+    const schemaStr =
+      typeof schema === "string" ? schema : JSON.stringify(schema);
+    return native.validate(schemaStr, data);
+  }
+  // JS fallback: compile and validate
+  const v = new Validator(typeof schema === "string" ? JSON.parse(schema) : schema);
+  return v.validate(data);
 }
 
 function version() {
-  return native.version();
+  if (native) return native.version();
+  return require("./package.json").version;
 }
 
 // Bundle multiple validators into a single JS file for fast startup.
