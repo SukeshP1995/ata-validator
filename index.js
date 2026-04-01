@@ -374,7 +374,7 @@ class Validator {
           return {
             issues: result.errors.map((err) => ({
               message: err.message,
-              path: parsePointerPath(err.path),
+              path: parsePointerPath(err.instancePath),
             })),
           };
         },
@@ -838,7 +838,7 @@ module.exports = { boolFn, hybridFactory, errFn };
           return {
             issues: result.errors.map((e) => ({
               message: e.message,
-              path: parsePointerPath(e.path),
+              path: parsePointerPath(e.instancePath),
             })),
           };
         },
