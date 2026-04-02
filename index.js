@@ -1,7 +1,7 @@
 // Native addon: optional. Core validate() uses JS codegen and works without it.
 // Buffer APIs (isValid, countValid, isValidParallel) require native.
 let native;
-try { native = require("node-gyp-build")(__dirname); } catch {}
+try { native = require("pkg-prebuilds")(__dirname, require("./binding-options")); } catch {}
 const {
   compileToJS,
   compileToJSCodegen,
