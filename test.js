@@ -97,8 +97,8 @@ test("error details include path and message", () => {
   const r = v.validate({ name: 123, age: "old" });
   assert(!r.valid);
   assert(r.errors.length >= 2, "should have at least 2 errors");
-  assert(r.errors.some((e) => e.path.includes("name")));
-  assert(r.errors.some((e) => e.path.includes("age")));
+  assert(r.errors.some((e) => e.instancePath.includes("name")));
+  assert(r.errors.some((e) => e.instancePath.includes("age")));
 });
 
 // --- Schema reuse ---
