@@ -20,7 +20,6 @@ option(ATA_TESTING "Build test suite" ON)
 option(ATA_BENCHMARKS "Build benchmarks" OFF)
 option(ATA_SANITIZE "Enable address sanitizer" OFF)
 
-
 # Fetch simdjson
 include(FetchContent)
 FetchContent_Declare(
@@ -51,59 +50,61 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(abseil-cpp)
-FetchContent_MakeAvailable(simdjson re2)
+FetchContent_MakeAvailable(abseil-cpp simdjson re2)
 
-include_directories(${CMAKE_JS_INC})
-file(GLOB SOURCE_FILES "binding/*.cpp" "src/*.cpp" "deps/simdjson/*.cpp")
+if (CMAKE_JS_VERSION)
+  # add_definitions(-DNAPI_VERSION=10)
+  include_directories(${CMAKE_JS_INC})
+  file(GLOB SOURCE_FILES "binding/*.cpp" "src/*.cpp" "deps/simdjson/*.cpp")
+else()
+  file(GLOB SOURCE_FILES "src/*.cpp" "deps/simdjson/*.cpp")
+endif()
 
-# Core library
-add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES} ${CMAKE_JS_SRC})
 
-# Include Node-API wrappers
-execute_process(
-  COMMAND node -p "require('node-addon-api').include"
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE NODE_ADDON_API_DIR
-)
+if (CMAKE_JS_VERSION)
+  add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES} ${CMAKE_JS_SRC})
 
-string(REGEX REPLACE "[\r\n\"]" "" NODE_ADDON_API_DIR ${NODE_ADDON_API_DIR})
-target_include_directories(${PROJECT_NAME} PRIVATE ${NODE_ADDON_API_DIR})
+  # Include Node-API wrappers
+  execute_process(
+    COMMAND node -p "require('node-addon-api').include"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE NODE_ADDON_API_DIR
+  )
 
-# Include Node-API C headers
+  string(REGEX REPLACE "[\r\n\"]" "" NODE_ADDON_API_DIR ${NODE_ADDON_API_DIR})
+  target_include_directories(${PROJECT_NAME} PRIVATE ${NODE_ADDON_API_DIR})
 
-execute_process(
-  COMMAND node -p "require('node-api-headers').include_dir"
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE NODE_API_HEADERS_DIR
-)
+  # Include Node-API C headers
+  execute_process(
+    COMMAND node -p "require('node-api-headers').include_dir"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE NODE_API_HEADERS_DIR
+  )
 
-string(REGEX REPLACE "[\r\n\"]" "" NODE_API_HEADERS_DIR ${NODE_API_HEADERS_DIR})
-target_include_directories(${PROJECT_NAME} PRIVATE ${NODE_API_HEADERS_DIR})
+  string(REGEX REPLACE "[\r\n\"]" "" NODE_API_HEADERS_DIR ${NODE_API_HEADERS_DIR})
+  target_include_directories(${PROJECT_NAME} PRIVATE ${NODE_API_HEADERS_DIR})
+else()
+  add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
+endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC include)
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_JS_INC})
 target_link_libraries(${PROJECT_NAME} PRIVATE simdjson re2)
-target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_JS_LIB})
-set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".node")
+
+if (CMAKE_JS_VERSION)
+  target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_JS_INC})
+  target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_JS_LIB})
+  set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "" SUFFIX ".node")
+endif()
 
 add_library(ata::ata ALIAS ata)
-
-if(APPLE)
-#
-elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Android")
-  list(APPEND LINK_LIBRARIES -static-libgcc)
-elseif(UNIX)
-  list(APPEND LINK_LIBRARIES -static-libgcc -static-libstdc++)
-endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LINK_LIBRARIES})
 
 if(UNIX AND NOT APPLE)
+  list(APPEND LINK_LIBRARIES -static-libgcc -static-libstdc++)
   target_compile_options(${PROJECT_NAME} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
   target_link_options(${PROJECT_NAME} PRIVATE -Wl,--exclude-libs,ALL)
 endif()
-
 
 if(MSVC AND CMAKE_JS_NODELIB_DEF AND CMAKE_JS_NODELIB_TARGET)
   # Generate node.lib
