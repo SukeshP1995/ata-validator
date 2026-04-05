@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#ifndef ATA_NO_RE2
 #include <re2/re2.h>
+#endif
 #include <set>
 #include <unordered_map>
 
@@ -274,7 +276,9 @@ struct schema_node {
   std::optional<uint64_t> min_length;
   std::optional<uint64_t> max_length;
   std::optional<std::string> pattern;
+#ifndef ATA_NO_RE2
   std::shared_ptr<re2::RE2> compiled_pattern;  // cached compiled regex (RE2)
+#endif
 
   // array
   std::optional<uint64_t> min_items;
@@ -301,7 +305,9 @@ struct schema_node {
   struct pattern_prop {
     std::string pattern;
     schema_node_ptr schema;
+#ifndef ATA_NO_RE2
     std::shared_ptr<re2::RE2> compiled;
+#endif
   };
   std::vector<pattern_prop> pattern_properties;
 
@@ -351,7 +357,9 @@ struct plan {
   std::vector<ins> code;
   std::vector<double> doubles;
   std::vector<std::string> strings;
+#ifndef ATA_NO_RE2
   std::vector<std::shared_ptr<re2::RE2>> regexes;
+#endif
   std::vector<std::vector<std::string>> enum_sets;
   std::vector<uint8_t> type_masks;
   std::vector<uint8_t> format_ids;
@@ -374,7 +382,9 @@ struct od_plan {
 
   // String — single value.get(sv) then all checks
   std::optional<uint64_t> min_length, max_length;
+#ifndef ATA_NO_RE2
   re2::RE2* pattern = nullptr;        // borrowed pointer from schema_node
+#endif
   uint8_t format_id = 255;            // 255 = no format check
 
   // Object — single iterate with merged required+property lookup
@@ -408,6 +418,7 @@ struct compiled_schema {
   schema_node_ptr root;
   std::unordered_map<std::string, schema_node_ptr> defs;
   std::string raw_schema;
+  std::string compile_error;  // non-empty if compilation failed
   dom::parser parser;          // used only at compile time
   cg::plan gen_plan;           // codegen validation plan
   bool use_ondemand = false;   // true if codegen plan supports On Demand
@@ -516,10 +527,15 @@ static schema_node_ptr compile_node(dom::element el,
     std::string_view sv;
     if (str_el.get(sv) == SUCCESS) {
       node->pattern = std::string(sv);
+#ifdef ATA_NO_RE2
+      ctx.compile_error = "pattern keyword requires RE2 support (built with ATA_NO_RE2)";
+      return node;
+#else
       auto re = std::make_shared<re2::RE2>(node->pattern.value());
       if (re->ok()) {
         node->compiled_pattern = std::move(re);
       }
+#endif
     }
   }
 
@@ -636,6 +652,10 @@ static schema_node_ptr compile_node(dom::element el,
   dom::element pp_el;
   if (obj["patternProperties"].get(pp_el) == SUCCESS &&
       pp_el.is<dom::object>()) {
+#ifdef ATA_NO_RE2
+    ctx.compile_error = "patternProperties keyword requires RE2 support (built with ATA_NO_RE2)";
+    return node;
+#else
     dom::object pp_obj; pp_el.get(pp_obj);
     for (auto [key, val] : pp_obj) {
       schema_node::pattern_prop pp;
@@ -647,6 +667,7 @@ static schema_node_ptr compile_node(dom::element el,
       }
       node->pattern_properties.push_back(std::move(pp));
     }
+#endif
   }
 
   // format
@@ -1061,6 +1082,7 @@ static void validate_node(const schema_node_ptr& node,
                             " > maxLength " +
                             std::to_string(node->max_length.value())});
     }
+#ifndef ATA_NO_RE2
     if (node->compiled_pattern) {
       if (!re2::RE2::PartialMatch(re2::StringPiece(sv.data(), sv.size()), *node->compiled_pattern)) {
         errors.push_back({error_code::pattern_mismatch, path,
@@ -1068,6 +1090,7 @@ static void validate_node(const schema_node_ptr& node,
                               node->pattern.value()});
       }
     }
+#endif
 
     if (node->format.has_value()) {
       if (!check_format_by_id(sv, node->format_id)) {
@@ -1215,10 +1238,12 @@ static void validate_node(const schema_node_ptr& node,
 
       // Check patternProperties (use cached compiled regex)
       for (const auto& pp : node->pattern_properties) {
+#ifndef ATA_NO_RE2
         if (pp.compiled && re2::RE2::PartialMatch(key_str, *pp.compiled)) {
           validate_node(pp.schema, val, path + "/" + key_str, ctx, errors, all_errors);
           matched = true;
         }
+#endif
       }
 
       // additionalProperties (only if not matched by properties or patternProperties)
@@ -1259,12 +1284,14 @@ static void validate_node(const schema_node_ptr& node,
             errors.push_back({error_code::max_length_violation, path,
                               "propertyNames: key too long: " + std::string(key_sv)});
           }
+#ifndef ATA_NO_RE2
           if (pn->compiled_pattern) {
             if (!re2::RE2::PartialMatch(re2::StringPiece(key_sv.data(), key_sv.size()), *pn->compiled_pattern)) {
               errors.push_back({error_code::pattern_mismatch, path,
                                 "propertyNames: key does not match pattern: " + std::string(key_sv)});
             }
           }
+#endif
           if (pn->format.has_value() && !check_format_by_id(key_sv, pn->format_id)) {
             errors.push_back({error_code::format_mismatch, path,
                               "propertyNames: key does not match format: " + std::string(key_sv)});
@@ -1444,10 +1471,12 @@ static bool validate_fast(const schema_node_ptr& node,
     uint64_t len = utf8_length(sv);
     if (node->min_length.has_value() && len < node->min_length.value()) return false;
     if (node->max_length.has_value() && len > node->max_length.value()) return false;
+#ifndef ATA_NO_RE2
     if (node->compiled_pattern) {
       if (!re2::RE2::PartialMatch(re2::StringPiece(sv.data(), sv.size()), *node->compiled_pattern))
         return false;
     }
+#endif
     if (node->format.has_value() && !check_format_by_id(sv, node->format_id)) return false;
   }
 
@@ -1532,11 +1561,13 @@ static bool validate_fast(const schema_node_ptr& node,
       }
 
       for (const auto& pp : node->pattern_properties) {
+#ifndef ATA_NO_RE2
         if (pp.compiled && re2::RE2::PartialMatch(
             re2::StringPiece(key_sv.data(), key_sv.size()), *pp.compiled)) {
           if (!validate_fast(pp.schema, val, ctx)) return false;
           matched = true;
         }
+#endif
       }
 
       if (!matched) {
@@ -1670,7 +1701,9 @@ static void cg_compile(const schema_node* n, cg::plan& p,
   // String
   if (n->min_length.has_value()) out.push_back({cg::op::CHECK_MIN_LENGTH,(uint32_t)*n->min_length});
   if (n->max_length.has_value()) out.push_back({cg::op::CHECK_MAX_LENGTH,(uint32_t)*n->max_length});
+#ifndef ATA_NO_RE2
   if (n->compiled_pattern) { uint32_t i=(uint32_t)p.regexes.size(); p.regexes.push_back(n->compiled_pattern); out.push_back({cg::op::CHECK_PATTERN,i}); }
+#endif
   if (n->format.has_value()) {
     uint32_t i=(uint32_t)p.format_ids.size();
     p.format_ids.push_back(n->format_id);
@@ -1744,7 +1777,11 @@ static bool cg_exec(const cg::plan& p, const std::vector<cg::ins>& code,
     case cg::op::CHECK_MULTIPLE_OF: if(t_numeric){double d=p.doubles[c.a],r=std::fmod(t_dval,d);if(std::abs(r)>1e-8&&std::abs(r-d)>1e-8)return false;} break;
     case cg::op::CHECK_MIN_LENGTH: if(t==et::STRING){std::string_view sv;value.get(sv);if(utf8_length(sv)<c.a)return false;} break;
     case cg::op::CHECK_MAX_LENGTH: if(t==et::STRING){std::string_view sv;value.get(sv);if(utf8_length(sv)>c.a)return false;} break;
+#ifndef ATA_NO_RE2
     case cg::op::CHECK_PATTERN: if(t==et::STRING){std::string_view sv;value.get(sv);if(!re2::RE2::PartialMatch(re2::StringPiece(sv.data(),sv.size()),*p.regexes[c.a]))return false;} break;
+#else
+    case cg::op::CHECK_PATTERN: break;
+#endif
     case cg::op::CHECK_FORMAT: if(t==et::STRING){std::string_view sv;value.get(sv);if(!check_format_by_id(sv,p.format_ids[c.a]))return false;} break;
     case cg::op::CHECK_MIN_ITEMS: if(t==et::ARRAY){dom::array a;value.get(a);uint64_t s=0;for([[maybe_unused]]auto _:a)++s;if(s<c.a)return false;} break;
     case cg::op::CHECK_MAX_ITEMS: if(t==et::ARRAY){dom::array a;value.get(a);uint64_t s=0;for([[maybe_unused]]auto _:a)++s;if(s>c.a)return false;} break;
@@ -1854,7 +1891,11 @@ static bool od_exec(const cg::plan& p, const std::vector<cg::ins>& code,
     }
     case cg::op::CHECK_MIN_LENGTH: if(t==json_type::string){std::string_view sv; if(value.get(sv)!=SUCCESS) return false; if(utf8_length(sv)<c.a) return false;} break;
     case cg::op::CHECK_MAX_LENGTH: if(t==json_type::string){std::string_view sv; if(value.get(sv)!=SUCCESS) return false; if(utf8_length(sv)>c.a) return false;} break;
+#ifndef ATA_NO_RE2
     case cg::op::CHECK_PATTERN: if(t==json_type::string){std::string_view sv; if(value.get(sv)!=SUCCESS) return false; if(!re2::RE2::PartialMatch(re2::StringPiece(sv.data(),sv.size()),*p.regexes[c.a]))return false;} break;
+#else
+    case cg::op::CHECK_PATTERN: break;
+#endif
     case cg::op::CHECK_FORMAT: if(t==json_type::string){std::string_view sv; if(value.get(sv)!=SUCCESS) return false; if(!check_format_by_id(sv,p.format_ids[c.a]))return false;} break;
     case cg::op::CHECK_MIN_ITEMS: if(t==json_type::array){
       simdjson::ondemand::array a; if(value.get(a)!=SUCCESS) return false;
@@ -2012,7 +2053,9 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
   if (node->multiple_of) { plan->num_flags |= od_plan::HAS_MUL; plan->num_mul = *node->multiple_of; }
   plan->min_length = node->min_length;
   plan->max_length = node->max_length;
+#ifndef ATA_NO_RE2
   plan->pattern = node->compiled_pattern.get();
+#endif
   plan->format_id = node->format_id;
 
   // Object plan — build hash lookup for O(1) per-field dispatch
@@ -2151,10 +2194,12 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
       if (plan.min_length && len < *plan.min_length) return false;
       if (plan.max_length && len > *plan.max_length) return false;
     }
+#ifndef ATA_NO_RE2
     if (plan.pattern) {
       if (!re2::RE2::PartialMatch(re2::StringPiece(sv.data(), sv.size()), *plan.pattern))
         return false;
     }
+#endif
     if (plan.format_id != 255) {
       if (!check_format_by_id(sv, plan.format_id)) return false;
     }
@@ -2234,6 +2279,10 @@ schema_ref compile(std::string_view schema_json) {
   doc = result.value();
 
   ctx->root = compile_node(doc, *ctx);
+
+  if (!ctx->compile_error.empty()) {
+    return schema_ref{nullptr};
+  }
 
   // Generate codegen plan
   cg_compile(ctx->root.get(), ctx->gen_plan, ctx->gen_plan.code);

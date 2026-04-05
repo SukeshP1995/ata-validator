@@ -19,6 +19,7 @@ endif()
 option(ATA_TESTING "Build test suite" ON)
 option(ATA_BENCHMARKS "Build benchmarks" OFF)
 option(ATA_SANITIZE "Enable address sanitizer" OFF)
+option(ATA_NO_RE2 "Build without RE2 regex engine (disables pattern keyword)" OFF)
 
 # Fetch simdjson
 include(FetchContent)
@@ -29,28 +30,32 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
-# RE2 — fast regex engine (replaces std::regex)
-set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-  re2
-  GIT_REPOSITORY https://github.com/google/re2.git
-  GIT_TAG 2024-07-02
-  GIT_SHALLOW TRUE
-  EXCLUDE_FROM_ALL
-)
+if(NOT ATA_NO_RE2)
+  # RE2 — fast regex engine (replaces std::regex)
+  set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    re2
+    GIT_REPOSITORY https://github.com/google/re2.git
+    GIT_TAG 2024-07-02
+    GIT_SHALLOW TRUE
+    EXCLUDE_FROM_ALL
+  )
 
-# Abseil — required by RE2
-set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
-set(ABSL_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(ABSL_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
-FetchContent_Declare(
-  abseil-cpp
-  GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-  GIT_TAG 20240722.0
-  GIT_SHALLOW TRUE
-)
+  # Abseil — required by RE2
+  set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
+  set(ABSL_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  set(ABSL_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    abseil-cpp
+    GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+    GIT_TAG 20240722.0
+    GIT_SHALLOW TRUE
+  )
 
-FetchContent_MakeAvailable(abseil-cpp simdjson re2)
+  FetchContent_MakeAvailable(abseil-cpp simdjson re2)
+else()
+  FetchContent_MakeAvailable(simdjson)
+endif()
 
 if (CMAKE_JS_VERSION)
   # add_definitions(-DNAPI_VERSION=10)
@@ -88,7 +93,12 @@ else()
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC include)
-target_link_libraries(${PROJECT_NAME} PRIVATE simdjson re2)
+if(ATA_NO_RE2)
+  target_link_libraries(${PROJECT_NAME} PRIVATE simdjson)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE ATA_NO_RE2)
+else()
+  target_link_libraries(${PROJECT_NAME} PRIVATE simdjson re2)
+endif()
 
 if (CMAKE_JS_VERSION)
   target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_JS_INC})
