@@ -1,4 +1,4 @@
-/* auto-generated on 2026-04-05 20:20:43 +0300. Do not edit! */
+/* auto-generated on 2026-04-07 04:35:23 +0300. Do not edit! */
 /* begin file include/ata.h */
 #pragma once
 
