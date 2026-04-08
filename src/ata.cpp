@@ -55,11 +55,15 @@ static bool fast_check_email(std::string_view s) {
 }
 
 static bool fast_check_date(std::string_view s) {
-  // YYYY-MM-DD
-  return s.size() == 10 && is_digit(s[0]) && is_digit(s[1]) &&
-         is_digit(s[2]) && is_digit(s[3]) && s[4] == '-' &&
-         is_digit(s[5]) && is_digit(s[6]) && s[7] == '-' &&
-         is_digit(s[8]) && is_digit(s[9]);
+  // YYYY-MM-DD with range validation
+  if (s.size() != 10 || !is_digit(s[0]) || !is_digit(s[1]) ||
+      !is_digit(s[2]) || !is_digit(s[3]) || s[4] != '-' ||
+      !is_digit(s[5]) || !is_digit(s[6]) || s[7] != '-' ||
+      !is_digit(s[8]) || !is_digit(s[9]))
+    return false;
+  int month = (s[5] - '0') * 10 + (s[6] - '0');
+  int day = (s[8] - '0') * 10 + (s[9] - '0');
+  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
 }
 
 static bool fast_check_time(std::string_view s) {
@@ -1014,6 +1018,15 @@ static uint64_t utf8_length(std::string_view s) {
   return count;
 }
 
+// Recursion depth guard — prevents stack overflow on self-referencing schemas
+struct DepthGuard {
+  static thread_local int depth;
+  bool overflow;
+  DepthGuard() : overflow(++depth > 100) {}
+  ~DepthGuard() { --depth; }
+};
+thread_local int DepthGuard::depth = 0;
+
 static void validate_node(const schema_node_ptr& node,
                            dom::element value,
                            const std::string& path,
@@ -1022,6 +1035,9 @@ static void validate_node(const schema_node_ptr& node,
                            bool all_errors,
                            dynamic_scope_t* dynamic_scope) {
   if (!node) return;
+
+  DepthGuard guard;
+  if (guard.overflow) return;
 
   // Boolean schema
   if (node->boolean_schema.has_value()) {
@@ -1707,6 +1723,9 @@ static bool validate_fast(const schema_node_ptr& node,
                            dom::element value,
                            const compiled_schema& ctx) {
   if (!node) [[unlikely]] return true;
+
+  DepthGuard guard;
+  if (guard.overflow) [[unlikely]] return true;
 
   if (node->boolean_schema.has_value()) [[unlikely]]
     return node->boolean_schema.value();

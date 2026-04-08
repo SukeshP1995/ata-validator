@@ -122,10 +122,14 @@ static bool napi_check_format(const std::string& sv, const std::string& fmt) {
            (sv.size() - dot - 1) >= 2;
   }
   if (fmt == "date") {
-    return sv.size() == 10 && nb_is_digit(sv[0]) && nb_is_digit(sv[1]) &&
-           nb_is_digit(sv[2]) && nb_is_digit(sv[3]) && sv[4] == '-' &&
-           nb_is_digit(sv[5]) && nb_is_digit(sv[6]) && sv[7] == '-' &&
-           nb_is_digit(sv[8]) && nb_is_digit(sv[9]);
+    if (sv.size() != 10 || !nb_is_digit(sv[0]) || !nb_is_digit(sv[1]) ||
+        !nb_is_digit(sv[2]) || !nb_is_digit(sv[3]) || sv[4] != '-' ||
+        !nb_is_digit(sv[5]) || !nb_is_digit(sv[6]) || sv[7] != '-' ||
+        !nb_is_digit(sv[8]) || !nb_is_digit(sv[9]))
+      return false;
+    int month = (sv[5] - '0') * 10 + (sv[6] - '0');
+    int day = (sv[8] - '0') * 10 + (sv[9] - '0');
+    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
   }
   if (fmt == "time") {
     if (sv.size() < 8) return false;
@@ -294,6 +298,15 @@ static void validate_napi(const schema_node_ptr& node,
                            const compiled_schema_internal& ctx,
                            std::vector<ata::validation_error>& errors);
 
+// Recursion depth guard — prevents stack overflow on self-referencing schemas
+struct NapiDepthGuard {
+  static thread_local int depth;
+  bool overflow;
+  NapiDepthGuard() : overflow(++depth > 100) {}
+  ~NapiDepthGuard() { --depth; }
+};
+thread_local int NapiDepthGuard::depth = 0;
+
 static void validate_napi(const schema_node_ptr& node,
                            Napi::Value value,
                            Napi::Env env,
@@ -301,6 +314,9 @@ static void validate_napi(const schema_node_ptr& node,
                            const compiled_schema_internal& ctx,
                            std::vector<ata::validation_error>& errors) {
   if (!node) return;
+
+  NapiDepthGuard guard;
+  if (guard.overflow) return;
 
   // Boolean schema
   if (node->boolean_schema.has_value()) {
