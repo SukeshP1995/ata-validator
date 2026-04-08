@@ -413,17 +413,20 @@ class Validator {
       ? this._schemaStr + '\0' + [...this._schemaMap.keys()].sort().join('\0')
       : this._schemaStr;
     const cached = _compileCache.get(mapKey);
-    let jsFn, jsCombinedFn, jsErrFn;
+    let jsFn, jsCombinedFn, jsErrFn, _isCodegen = false;
     var _forceNapi = typeof process !== 'undefined' && process.env && process.env.ATA_FORCE_NAPI;
     if (cached && !_forceNapi) {
       jsFn = cached.jsFn;
       jsCombinedFn = cached.combined;
       jsErrFn = cached.errFn;
+      _isCodegen = !!cached.isCodegen;
     } else if (!_forceNapi) {
-      jsFn = compileToJSCodegen(schemaObj, sm) || compileToJS(schemaObj, null, sm);
+      const _cgFn = compileToJSCodegen(schemaObj, sm);
+      jsFn = _cgFn || compileToJS(schemaObj, null, sm);
       jsCombinedFn = compileToJSCombined(schemaObj, VALID_RESULT, sm);
       jsErrFn = compileToJSCodegenWithErrors(schemaObj, sm);
-      _compileCache.set(mapKey, { jsFn, combined: jsCombinedFn, errFn: jsErrFn });
+      _isCodegen = !!_cgFn;
+      _compileCache.set(mapKey, { jsFn, combined: jsCombinedFn, errFn: jsErrFn, isCodegen: _isCodegen });
     } else {
       jsFn = null; jsCombinedFn = null; jsErrFn = null;
     }
@@ -515,21 +518,18 @@ class Validator {
         } catch {}
       }
 
-      if (hasDynRef) {
-        // $dynamicRef/$dynamicAnchor: JS codegen does not handle these,
-        // always delegate to native C++ validator for correctness
+      if (hasDynRef && _isCodegen && jsFn) {
+        // $dynamicRef with JS codegen: use codegen jsFn for bool, errFn for errors
+        this.validate = preprocess
+          ? (data) => { preprocess(data); return jsFn(data) ? VALID_RESULT : errFn(data); }
+          : (data) => jsFn(data) ? VALID_RESULT : errFn(data);
+      } else if (hasDynRef) {
+        // $dynamicRef without codegen: delegate to native C++ (interpretive path unreliable)
         this.validate = preprocess
           ? (data) => { preprocess(data); return errFn(data); }
           : errFn;
-      } else if (safeCombinedFn && jsFn) {
-        // Hybrid: jsFn boolean guard for valid (fast, no allocation), combined for invalid
-        this.validate = preprocess
-          ? (data) => {
-              preprocess(data);
-              return jsFn(data) ? VALID_RESULT : safeCombinedFn(data);
-            }
-          : (data) => jsFn(data) ? VALID_RESULT : safeCombinedFn(data);
       } else if (safeCombinedFn) {
+        // Combined: single function, returns VALID_RESULT for valid, error object for invalid
         this.validate = preprocess
           ? (data) => {
               preprocess(data);
