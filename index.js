@@ -309,6 +309,14 @@ function buildSchemaMap(schemas) {
   return map
 }
 
+// Resolve a relative URI ref against a base URI
+function resolveRelativeRef(ref, baseId) {
+  if (!baseId || ref.includes('://') || ref.startsWith('#')) return ref
+  const lastSlash = baseId.lastIndexOf('/')
+  if (lastSlash < 0) return ref
+  return baseId.substring(0, lastSlash + 1) + ref
+}
+
 class Validator {
   constructor(schema, opts) {
     const options = opts || {};
@@ -465,14 +473,20 @@ class Validator {
       // errFn: use JS codegen if safe, else lazy-native fallback
       // For unevaluated schemas without errFn, use jsFn as boolean-only fallback
       const hasUnevaluated = schemaObj && JSON.stringify(schemaObj).includes('unevaluatedProperties') || JSON.stringify(schemaObj).includes('unevaluatedItems')
+      const hasDynRef = this._schemaStr.includes('"$dynamicRef"') || this._schemaStr.includes('"$dynamicAnchor"')
       const errFn =
         safeErrFn ||
         (hasUnevaluated
           ? (d) => ({ valid: jsFn(d), errors: jsFn(d) ? [] : [{ code: 'unevaluated', path: '', message: 'unevaluated property or item' }] })
-          : (d) => {
-              this._ensureNative();
-              return this._compiled.validate(d);
-            });
+          : hasDynRef
+            ? (d) => {
+                this._ensureNative();
+                return this._compiled.validateJSON(JSON.stringify(d));
+              }
+            : (d) => {
+                this._ensureNative();
+                return this._compiled.validate(d);
+              });
 
       // Best path: combined validator (single pass, validates + collects errors)
       // Valid data: returns VALID_RESULT, no allocation
@@ -501,7 +515,13 @@ class Validator {
         } catch {}
       }
 
-      if (safeCombinedFn && jsFn) {
+      if (hasDynRef) {
+        // $dynamicRef/$dynamicAnchor: JS codegen does not handle these,
+        // always delegate to native C++ validator for correctness
+        this.validate = preprocess
+          ? (data) => { preprocess(data); return errFn(data); }
+          : errFn;
+      } else if (safeCombinedFn && jsFn) {
         // Hybrid: jsFn boolean guard for valid (fast, no allocation), combined for invalid
         this.validate = preprocess
           ? (data) => {
@@ -616,15 +636,21 @@ class Validator {
         };
       }
     } else if (native) {
-      // ATA_FORCE_NAPI path: no JS codegen, use native for everything
+      // Native-only path: no JS codegen, use native for everything
       this._ensureNative();
+      const _hasDynamic = this._schemaStr.includes('"$dynamicRef"') || this._schemaStr.includes('"$dynamicAnchor"') || this._schemaStr.includes('"$anchor"')
+      // For schemas with dynamic refs/anchors, use validateJSON (C++ path with full support)
+      // instead of validate (NAPI direct V8 path without anchor maps)
+      const _validate = _hasDynamic
+        ? (data) => this._compiled.validateJSON(JSON.stringify(data))
+        : (data) => this._compiled.validate(data);
       this.validate = preprocess
         ? (data) => {
             preprocess(data);
-            return this._compiled.validate(data);
+            return _validate(data);
           }
-        : (data) => this._compiled.validate(data);
-      this.isValidObject = (data) => this._compiled.validate(data).valid;
+        : _validate;
+      this.isValidObject = (data) => _validate(data).valid;
       this.validateJSON = (jsonStr) => this._compiled.validateJSON(jsonStr);
       this.isValidJSON = (jsonStr) => this._compiled.isValidJSON(jsonStr);
       {

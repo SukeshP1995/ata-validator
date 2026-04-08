@@ -89,6 +89,8 @@ struct schema_node {
   schema_node_ptr else_schema;
 
   std::string ref;
+  std::string dynamic_ref;
+  std::string id;
 
   std::unordered_map<std::string, schema_node_ptr> defs;
 

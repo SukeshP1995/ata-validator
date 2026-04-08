@@ -3,6 +3,19 @@ const path = require("path");
 const { Validator } = require("../index");
 
 const SUITE_DIR = path.join(__dirname, "suite/tests/draft2020-12");
+const REMOTES_DIR = path.join(__dirname, "suite/remotes/draft2020-12");
+
+// Load remote schemas for cross-schema $ref resolution
+const remoteSchemas = [];
+if (fs.existsSync(REMOTES_DIR)) {
+  for (const f of fs.readdirSync(REMOTES_DIR)) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(REMOTES_DIR, f), "utf8"));
+      if (s.$id) remoteSchemas.push(s);
+    } catch {}
+  }
+}
 
 // Test files we support (skip: refRemote, dynamicRef, vocabulary, anchor,
 // contains, prefixItems, unevaluatedItems, unevaluatedProperties,
@@ -49,6 +62,7 @@ const SUPPORTED_FILES = [
   "unevaluatedItems.json",
   "format.json",
   "anchor.json",
+  "dynamicRef.json",
 ];
 
 let totalPass = 0;
@@ -74,19 +88,25 @@ for (const file of SUPPORTED_FILES) {
     const hasRemoteRef =
       schemaStr.includes('"$ref":"http') ||
       schemaStr.includes('"$ref": "http');
-    const hasDynamicRef = schemaStr.includes("$dynamicRef");
-    const hasAnchor =
-      schemaStr.includes('"$anchor"') &&
-      !schemaStr.includes('"$defs"');
-    if (hasRemoteRef || hasDynamicRef || hasAnchor) {
+    if (hasRemoteRef) {
       fileSkip += suite.tests.length;
       totalSkip += suite.tests.length;
       continue;
     }
 
+    // Only pass remote schemas if the schema has refs to external files
+    // (relative URI refs that match a loaded remote by filename)
+    const remoteNames = remoteSchemas.map(s => {
+      const id = s.$id || '';
+      const slash = id.lastIndexOf('/');
+      return slash >= 0 ? id.substring(slash + 1) : id;
+    });
+    const needsRemotes = remoteNames.some(name =>
+      schemaStr.includes('"$ref":"' + name + '"') ||
+      schemaStr.includes('"$ref": "' + name + '"'));
     let validator;
     try {
-      validator = new Validator(suite.schema);
+      validator = new Validator(suite.schema, needsRemotes ? { schemas: remoteSchemas } : undefined);
     } catch (e) {
       // Schema compilation failed — skip this group
       fileSkip += suite.tests.length;
