@@ -13,7 +13,7 @@ Ultra-fast JSON Schema validator powered by [simdjson](https://github.com/simdjs
 | **validate(obj)** valid | 22ns | 102ns | **ata 4.6x faster** |
 | **validate(obj)** invalid | 87ns | 182ns | **ata 2.1x faster** |
 | **isValidObject(obj)** | 21ns | 100ns | **ata 4.7x faster** |
-| **Schema compilation** | 695ns | 1.30ms | **ata 1,867x faster** |
+| **Schema compilation** | 453ns | 1.24ms | **ata 2,729x faster** |
 | **First validation** | 2.07μs | 1.11ms | **ata 534x faster** |
 
 ### Complex Schema (patternProperties + dependentSchemas + propertyNames + additionalProperties)
@@ -54,7 +54,7 @@ Three-tier hybrid codegen: static schemas compile to zero-overhead key checks, d
 |---|---|---|---|---|---|
 | **validate (valid)** | **9ns** | 38ns | 50ns | 334ns | 326ns |
 | **validate (invalid)** | **37ns** | 103ns | 4ns | 11.8μs | 842ns |
-| **compilation** | **584ns** | 1.20ms | 52μs | — | — |
+| **compilation** | **453ns** | 1.24ms | 52μs | — | — |
 | **first validation** | **2.1μs** | 1.11ms | 54μs | — | — |
 
 > Different categories: ata/ajv/typebox are JSON Schema validators, zod/valibot are schema-builder DSLs. [Benchmark code](benchmark/bench_all_mitata.mjs)
@@ -71,7 +71,7 @@ Three-tier hybrid codegen: static schemas compile to zero-overhead key checks, d
 
 | Scenario | ata | ajv | |
 |---|---|---|---|
-| **Serverless cold start** (50 schemas) | 0.1ms | 23ms | **ata 230x faster** |
+| **Serverless cold start** (50 schemas) | 0.087ms | 3.67ms | **ata 42x faster** |
 | **ReDoS protection** (`^(a+)+$`) | 0.3ms | 765ms | **ata immune (RE2)** |
 | **Batch NDJSON** (10K items, multi-core) | 13.4M/sec | 5.1M/sec | **ata 2.6x faster** |
 | **Fastify startup** (5 routes) | 0.5ms | 6.0ms | **ata 12x faster** |
