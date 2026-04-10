@@ -123,7 +123,7 @@ Self-recursive named functions for $dynamicRef, compile-time cross-schema resolu
 
 ## Features
 
-- **Hybrid validator**: 5.3x faster than ajv valid, up to 94x faster on $dynamicRef - zero-wrapper hybrid path for valid data (no allocation), combined codegen for error collection. Schema compilation cache for repeated schemas
+- **Hybrid validator**: 4.1x faster than ajv, up to 70x faster on $dynamicRef - zero-wrapper hybrid path for valid data (no allocation), combined codegen for error collection. Schema compilation cache for repeated schemas
 - **$dynamicRef / $dynamicAnchor / $anchor**: Full Draft 2020-12 dynamic reference support. Self-recursive named functions, compile-time cross-schema resolution (42/42 spec tests)
 - **Cross-schema `$ref`**: `schemas` option and `addSchema()` API. Compile-time resolution with `$id` registry, zero runtime overhead
 - **Draft 7 support**: Auto-detects `$schema` field, normalizes `dependencies`/`additionalItems`/`definitions` transparently
