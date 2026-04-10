@@ -1105,8 +1105,26 @@ Validator.loadBundle = function (mods, schemas, opts) {
 
 const parseJSON = native ? native.parseJSON : JSON.parse;
 
+// Ultra-fast compile: returns validate function directly, no Validator wrapper
+// WeakMap cached — second call with same schema object is ~3ns
+const _compileFnCache = new WeakMap();
+function compile(schema, opts) {
+  if (!opts && typeof schema === 'object' && schema !== null) {
+    const hit = _compileFnCache.get(schema);
+    if (hit) return hit;
+  }
+  const v = new Validator(schema, opts);
+  v._ensureCompiled();
+  const fn = v.validate;
+  if (!opts && typeof schema === 'object' && schema !== null) {
+    _compileFnCache.set(schema, fn);
+  }
+  return fn;
+}
+
 module.exports = {
   Validator,
+  compile,
   validate,
   version,
   createPaddedBuffer,
