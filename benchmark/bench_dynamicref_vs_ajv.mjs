@@ -47,7 +47,7 @@ const anchorSchema = {
   },
 };
 
-// --- Schema 4: $dynamicRef with override (the real power) ---
+// --- Schema 4: $dynamicRef with override ---
 const baseListSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://example.com/list",
@@ -83,13 +83,12 @@ const anchorInvalid = ["foo", 42, "baz"];
 const stringListValid = ["hello", "world", "test"];
 const stringListInvalid = ["hello", 42, "test"];
 
-// --- Compile ATA ---
+// --- Compile ---
 const ataNormal = new Validator(normalSchema);
 const ataTree = new Validator(treeSchema);
 const ataAnchor = new Validator(anchorSchema);
 const ataStringList = new Validator(stringListSchema, { schemas: [baseListSchema] });
 
-// --- Compile AJV ---
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
 const ajvNormal = ajv.compile(normalSchema);
@@ -110,40 +109,43 @@ console.log("  strlist ata:", ataStringList.validate(stringListValid).valid, "/"
 console.log("  strlist ajv:", ajvStringList(stringListValid), "/", ajvStringList(stringListInvalid));
 console.log();
 
+// Using yield pattern to prevent LICM (Loop Invariant Code Motion)
+// See: https://github.com/evanwashere/mitata?tab=readme-ov-file#loop-invariant-code-motion-optimization
+
 summary(() => {
   group("normal schema - valid", () => {
-    bench("ata", () => do_not_optimize(ataNormal.validate(normalValid)));
-    bench("ajv", () => do_not_optimize(ajvNormal(normalValid)));
+    bench("ata", function* () { yield { 0: () => normalValid, bench: (d) => do_not_optimize(ataNormal.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => normalValid, bench: (d) => do_not_optimize(ajvNormal(d)) }; });
   });
 
   group("normal schema - invalid", () => {
-    bench("ata", () => do_not_optimize(ataNormal.validate(normalInvalid)));
-    bench("ajv", () => do_not_optimize(ajvNormal(normalInvalid)));
+    bench("ata", function* () { yield { 0: () => normalInvalid, bench: (d) => do_not_optimize(ataNormal.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => normalInvalid, bench: (d) => do_not_optimize(ajvNormal(d)) }; });
   });
 
   group("$dynamicRef tree - valid", () => {
-    bench("ata", () => do_not_optimize(ataTree.validate(treeValid)));
-    bench("ajv", () => do_not_optimize(ajvTree(treeValid)));
+    bench("ata", function* () { yield { 0: () => treeValid, bench: (d) => do_not_optimize(ataTree.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => treeValid, bench: (d) => do_not_optimize(ajvTree(d)) }; });
   });
 
   group("$dynamicRef tree - invalid", () => {
-    bench("ata", () => do_not_optimize(ataTree.validate(treeInvalid)));
-    bench("ajv", () => do_not_optimize(ajvTree(treeInvalid)));
+    bench("ata", function* () { yield { 0: () => treeInvalid, bench: (d) => do_not_optimize(ataTree.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => treeInvalid, bench: (d) => do_not_optimize(ajvTree(d)) }; });
   });
 
   group("$anchor array - valid", () => {
-    bench("ata", () => do_not_optimize(ataAnchor.validate(anchorValid)));
-    bench("ajv", () => do_not_optimize(ajvAnchor(anchorValid)));
+    bench("ata", function* () { yield { 0: () => anchorValid, bench: (d) => do_not_optimize(ataAnchor.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => anchorValid, bench: (d) => do_not_optimize(ajvAnchor(d)) }; });
   });
 
   group("$dynamicRef override (string list) - valid", () => {
-    bench("ata", () => do_not_optimize(ataStringList.validate(stringListValid)));
-    bench("ajv", () => do_not_optimize(ajvStringList(stringListValid)));
+    bench("ata", function* () { yield { 0: () => stringListValid, bench: (d) => do_not_optimize(ataStringList.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => stringListValid, bench: (d) => do_not_optimize(ajvStringList(d)) }; });
   });
 
   group("$dynamicRef override (string list) - invalid", () => {
-    bench("ata", () => do_not_optimize(ataStringList.validate(stringListInvalid)));
-    bench("ajv", () => do_not_optimize(ajvStringList(stringListInvalid)));
+    bench("ata", function* () { yield { 0: () => stringListInvalid, bench: (d) => do_not_optimize(ataStringList.validate(d)) }; });
+    bench("ajv", function* () { yield { 0: () => stringListInvalid, bench: (d) => do_not_optimize(ajvStringList(d)) }; });
   });
 });
 
