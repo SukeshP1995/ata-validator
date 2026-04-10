@@ -325,9 +325,7 @@ class Validator {
     // Draft 7 normalization — convert keywords to 2020-12 equivalents in-place
     normalizeDraft7(schemaObj);
 
-    const schemaStr = JSON.stringify(schemaObj);
-
-    this._schemaStr = schemaStr;
+    this._schemaStr = null; // lazy: computed on first use
     this._schemaObj = schemaObj;
     this._options = options;
     this._initialized = false;
@@ -357,6 +355,11 @@ class Validator {
     this.isValidJSON = (jsonStr) => {
       this._ensureCompiled();
       return this.isValidJSON(jsonStr);
+    };
+    this.validateAndParse = (jsonStr) => {
+      if (!native) throw new Error('Native addon required for validateAndParse()');
+      this._ensureCompiled();
+      return this.validateAndParse(jsonStr);
     };
     this.isValid = (buf) => {
       if (!native) throw new Error('Native addon required for isValid() — use validate() or isValidObject() instead');
@@ -406,6 +409,9 @@ class Validator {
 
     const schemaObj = this._schemaObj;
     const options = this._options;
+
+    // Lazy stringify — only computed here, not in constructor
+    if (!this._schemaStr) this._schemaStr = JSON.stringify(schemaObj);
 
     // Check cache first -- reuse compiled functions for same schema
     const sm = this._schemaMap.size > 0 ? this._schemaMap : null;
@@ -475,7 +481,7 @@ class Validator {
       }
       // errFn: use JS codegen if safe, else lazy-native fallback
       // For unevaluated schemas without errFn, use jsFn as boolean-only fallback
-      const hasUnevaluated = schemaObj && JSON.stringify(schemaObj).includes('unevaluatedProperties') || JSON.stringify(schemaObj).includes('unevaluatedItems')
+      const hasUnevaluated = schemaObj && (schemaObj.unevaluatedProperties !== undefined || schemaObj.unevaluatedItems !== undefined || this._schemaStr.includes('unevaluatedProperties') || this._schemaStr.includes('unevaluatedItems'))
       const hasDynRef = this._schemaStr.includes('"$dynamicRef"') || this._schemaStr.includes('"$dynamicAnchor"')
       const errFn =
         safeErrFn ||
@@ -616,6 +622,17 @@ class Validator {
               return false;
             }
           };
+      // validateAndParse: requires native addon for simdjson parsing
+      if (native) {
+        const self = this;
+        this.validateAndParse = (jsonStr) => {
+          self._ensureNative();
+          self.validateAndParse = (s) => self._compiled.validateAndParse(s);
+          return self.validateAndParse(jsonStr);
+        };
+      } else {
+        this.validateAndParse = () => { throw new Error('Native addon required for validateAndParse()'); };
+      }
       // Buffer APIs: lazy native init — only compile native schema on first buffer call.
       // This keeps cold start fast (JS codegen only) for users who only use validate().
       if (native) {
@@ -657,6 +674,7 @@ class Validator {
       this.isValidObject = (data) => _validate(data).valid;
       this.validateJSON = (jsonStr) => this._compiled.validateJSON(jsonStr);
       this.isValidJSON = (jsonStr) => this._compiled.isValidJSON(jsonStr);
+      this.validateAndParse = (jsonStr) => this._compiled.validateAndParse(jsonStr);
       {
         const slot = this._fastSlot;
         this.isValid = (buf) => {
@@ -861,6 +879,14 @@ module.exports = { boolFn, hybridFactory, errFn };
       }
     };
 
+    v.validateAndParse = native
+      ? (jsonStr) => {
+          v._ensureNative();
+          v.validateAndParse = (s) => v._compiled.validateAndParse(s);
+          return v.validateAndParse(jsonStr);
+        }
+      : () => { throw new Error('Native addon required for validateAndParse()'); };
+
     // Standard Schema V1
     Object.defineProperty(v, "~standard", {
       value: Object.freeze({
@@ -1060,10 +1086,13 @@ Validator.loadBundle = function (mods, schemas, opts) {
   });
 };
 
+const parseJSON = native ? native.parseJSON : JSON.parse;
+
 module.exports = {
   Validator,
   validate,
   version,
   createPaddedBuffer,
   SIMDJSON_PADDING,
+  parseJSON,
 };
