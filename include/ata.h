@@ -66,8 +66,14 @@ struct validation_result {
 
 struct compiled_schema;
 
+struct schema_warning {
+  std::string path;
+  std::string message;
+};
+
 struct schema_ref {
   std::shared_ptr<compiled_schema> impl;
+  std::vector<schema_warning> warnings;
 
   explicit operator bool() const noexcept { return impl != nullptr; }
 };
