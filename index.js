@@ -754,6 +754,7 @@ class Validator {
   _ensureCodegen() {
     if (this._jsFn) return;
     if (typeof process !== 'undefined' && process.env && process.env.ATA_FORCE_NAPI) return;
+    if (!this._schemaStr) this._schemaStr = JSON.stringify(this._schemaObj);
     const sm = this._schemaMap.size > 0 ? this._schemaMap : null;
     const mapKey = this._schemaMap.size > 0
       ? this._schemaStr + '\0' + [...this._schemaMap.keys()].sort().join('\0')
