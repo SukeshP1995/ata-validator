@@ -211,29 +211,66 @@ const v = new Validator(schema, {
   coerceTypes: true,       // "42" → 42 for integer fields
   removeAdditional: true,  // strip properties not in schema
   schemas: [otherSchema],  // cross-schema $ref registry
+  abortEarly: true,        // skip detailed error collection on failure (~4x faster on invalid data)
 });
 ```
 
-### Standalone Pre-compilation
+`abortEarly` returns a shared `{ valid: false, errors: [{ message: 'validation failed' }] }` on failure instead of running the detailed error collector. Useful when the caller only needs a pass/fail decision (Fastify route guards, high-throughput gatekeepers, request rejection at the edge).
 
-Pre-compile schemas to JS files for near-zero startup. No native addon needed at runtime.
+### Build-time compile (`ata compile`)
+
+The `ata` CLI turns a JSON Schema file into a self-contained JavaScript module. No runtime dependency on `ata-validator`, so only the generated validator ships to the browser — typical output is ~1 KB gzipped compared to ~27 KB for the full runtime.
+
+```bash
+npx ata compile schemas/user.json -o src/generated/user.validator.mjs
+```
+
+The CLI emits two files: the validator itself and a paired `.d.mts` (or `.d.cts`) with the inferred TypeScript type plus an `isValid` type predicate.
+
+```ts
+import { isValid, validate, type User } from './user.validator.mjs'
+
+const incoming: unknown = JSON.parse(req.body)
+
+if (isValid(incoming)) {
+  // TypeScript narrows to User here
+  incoming.id      // number
+  incoming.role    // 'admin' | 'user' | 'guest' | undefined
+}
+
+const r = validate(incoming)
+// { valid: true, errors: [] } | { valid: false, errors: ValidationError[] }
+```
+
+CLI options:
+
+| Flag | Default | Description |
+|---|---|---|
+| `-o, --output <file>` | `<schema>.validator.mjs` | Output path |
+| `-f, --format <fmt>` | `esm` | `esm` or `cjs` |
+| `--name <TypeName>` | from filename | Root type name in the `.d.ts` |
+| `--abort-early` | off | Generate the stub-error variant (~0.5 KB gzipped) |
+| `--no-types` | off | Skip the `.d.mts` / `.d.cts` output |
+
+Typical bundle sizes (10-field user schema, gzipped):
+
+| Variant | Size | Notes |
+|---|---|---|
+| `ata-validator` runtime | ~27 KB | Full compiler + all keywords |
+| `ata compile` (standard) | **~1.1 KB** | Validator + detailed error collector |
+| `ata compile --abort-early` | **~0.5 KB** | Validator + stub errors only |
+
+Programmatic API if you prefer to script it:
 
 ```javascript
 const fs = require('fs');
+const { Validator } = require('ata-validator');
 
-// Build phase (once)
 const v = new Validator(schema);
-fs.writeFileSync('./compiled.js', v.toStandalone());
-
-// Read phase (every startup) - 0.6μs per schema, pure JS
-const v2 = Validator.fromStandalone(require('./compiled.js'), schema);
-
-// Bundle multiple schemas - deduplicated, single file
-fs.writeFileSync('./bundle.js', Validator.bundleCompact(schemas));
-const validators = Validator.loadBundle(require('./bundle.js'), schemas);
+fs.writeFileSync('./user.validator.mjs', v.toStandaloneModule({ format: 'esm' }));
 ```
 
-**Fastify startup (5 routes): ajv 6.0ms → ata 0.5ms (12x faster, no build step needed)**
+**Fastify startup (10 routes cold): ajv 12.6ms → ata 0.5ms (24x faster boot, no build step required)**
 
 ### Standard Schema V1
 
