@@ -1216,6 +1216,8 @@ function compile(schema, opts) {
   return fn;
 }
 
+const { toTypeScript } = require("./lib/ts-gen");
+
 module.exports = {
   Validator,
   compile,
@@ -1224,4 +1226,5 @@ module.exports = {
   createPaddedBuffer,
   SIMDJSON_PADDING,
   parseJSON,
+  toTypeScript,
 };

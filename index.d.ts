@@ -123,3 +123,11 @@ export function createPaddedBuffer(jsonStr: string): { buffer: Buffer; length: n
 
 /** Required padding size for simdjson buffers. */
 export const SIMDJSON_PADDING: number;
+
+/**
+ * Generate a TypeScript declaration (.d.ts source) for the given JSON Schema.
+ * Returns a string containing the generated type plus `isValid` / `validate`
+ * signatures. Used internally by the `ata compile` CLI and exposed for
+ * build-time integrations (Vite plugin, custom build steps).
+ */
+export function toTypeScript(schema: object, options?: { name?: string }): string;
