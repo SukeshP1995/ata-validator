@@ -318,6 +318,24 @@ auto result = ata::validate(schema, R"({"name": "Mert"})");
 // result.valid == true
 ```
 
+## Framework integrations
+
+Copy-paste recipes for the common frameworks. Most need 10-20 lines of glue. See [docs/integrations](docs/integrations/) for the full set.
+
+| Framework | Pattern | Recipe |
+|---|---|---|
+| Fastify | dedicated plugin | [`fastify-ata`](https://github.com/ata-core/fastify-ata) |
+| Vite (build-time compile) | dedicated plugin | [`ata-vite`](https://github.com/ata-core/ata-vite) |
+| Hono | async middleware | [docs/integrations/hono.md](docs/integrations/hono.md) |
+| Elysia | direct handler check | [docs/integrations/elysia.md](docs/integrations/elysia.md) |
+| tRPC | Standard Schema V1 input | [docs/integrations/trpc.md](docs/integrations/trpc.md) |
+| TanStack Form | Standard Schema V1 validator | [docs/integrations/tanstack-form.md](docs/integrations/tanstack-form.md) |
+| Express | sync middleware | [docs/integrations/express.md](docs/integrations/express.md) |
+| Koa | async ctx middleware | [docs/integrations/koa.md](docs/integrations/koa.md) |
+| NestJS | validation pipe | [docs/integrations/nestjs.md](docs/integrations/nestjs.md) |
+| SvelteKit | form action, API route | [docs/integrations/sveltekit.md](docs/integrations/sveltekit.md) |
+| Astro | API route, server action | [docs/integrations/astro.md](docs/integrations/astro.md) |
+
 ## Supported Keywords
 
 | Category | Keywords |
