@@ -360,7 +360,21 @@ class Validator {
       return this.validate(data);
     };
     this.isValidObject = (data) => {
-      this._ensureCodegen();
+      // Lazy: classify + build tier 0 plan on first call, not in constructor.
+      const _tier = classify(this._schemaObj);
+      if (_tier.tier === 0) {
+        const _plan = buildTier0Plan(this._schemaObj);
+        let _n = 0;
+        this.isValidObject = (d) => {
+          const r = tier0Validate(_plan, d);
+          if (++_n === 2) {
+            try { this._ensureCodegen(); } catch {}
+          }
+          return r;
+        };
+      } else {
+        this._ensureCodegen();
+      }
       return this.isValidObject(data);
     };
     this.validateJSON = (jsonStr) => {
@@ -416,24 +430,6 @@ class Validator {
       enumerable: false,
       configurable: false,
     });
-
-    // Tier 0 fast path: override isValidObject with a direct bound validator.
-    // All other methods (validate, validateJSON, etc.) stay on the lazy stubs above.
-    // Tier 0/1 are boolean-only; error paths continue through codegen.
-    // After the 2nd call we upgrade to codegen (~4x faster warm path). One-shot
-    // validators (fresh-schema cold-start users) never trigger the upgrade.
-    const _tier = classify(schemaObj);
-    if (_tier.tier === 0) {
-      const _plan = buildTier0Plan(schemaObj);
-      let _n = 0;
-      this.isValidObject = (data) => {
-        const r = tier0Validate(_plan, data);
-        if (++_n === 2) {
-          try { this._ensureCodegen(); } catch {}
-        }
-        return r;
-      };
-    }
 
     // Populate identity cache so repeated `new Validator(sameSchema)` short-circuits.
     if (!opts && typeof schema === "object" && schema !== null) {
