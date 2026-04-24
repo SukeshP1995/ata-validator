@@ -1,0 +1,10 @@
+{
+  "$defs": {
+    "Tag": { "type": "string", "enum": ["a","b","c"] }
+  },
+  "type": "object",
+  "properties": {
+    "tag": { "$ref": "#/$defs/Tag" }
+  },
+  "required": ["tag"]
+}

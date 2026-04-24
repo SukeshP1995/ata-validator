@@ -1,0 +1,6 @@
+{
+  "oneOf": [
+    { "type": "object", "properties": { "kind": { "const": "a" }, "value": { "type": "string" } }, "required": ["kind","value"] },
+    { "type": "object", "properties": { "kind": { "const": "b" }, "count": { "type": "integer" } }, "required": ["kind","count"] }
+  ]
+}

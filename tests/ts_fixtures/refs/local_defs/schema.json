@@ -1,0 +1,15 @@
+{
+  "$defs": {
+    "Address": {
+      "type": "object",
+      "properties": { "city": { "type": "string" } },
+      "required": ["city"]
+    }
+  },
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "address": { "$ref": "#/$defs/Address" }
+  },
+  "required": ["name", "address"]
+}

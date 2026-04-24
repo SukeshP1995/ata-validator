@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "a": {
+      "type": "object",
+      "properties": {
+        "b": {
+          "type": "object",
+          "properties": {
+            "c": {
+              "type": "object",
+              "properties": {
+                "d": { "type": "string" }
+              },
+              "required": ["d"]
+            }
+          },
+          "required": ["c"]
+        }
+      },
+      "required": ["b"]
+    }
+  },
+  "required": ["a"]
+}

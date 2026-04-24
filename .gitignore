@@ -14,3 +14,9 @@ docs/superpowers/
 benchmark/profile_*.mjs
 
 .worktrees/
+
+# TS test fixtures: auto-generated per run
+tests/ts_fixtures/**/validator.mjs
+tests/ts_fixtures/**/validator.d.mts
+tests/ts_fixtures/**/validator.d.cts
+tests/ts_fixtures/**/validator.cjs
