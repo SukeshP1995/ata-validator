@@ -419,10 +419,19 @@ class Validator {
     // Tier 0 fast path: override isValidObject with a direct bound validator.
     // All other methods (validate, validateJSON, etc.) stay on the lazy stubs above.
     // Tier 0/1 are boolean-only; error paths continue through codegen.
+    // After the 2nd call we upgrade to codegen (~4x faster warm path). One-shot
+    // validators (fresh-schema cold-start users) never trigger the upgrade.
     const _tier = classify(schemaObj);
     if (_tier.tier === 0) {
       const _plan = buildTier0Plan(schemaObj);
-      this.isValidObject = (data) => tier0Validate(_plan, data);
+      let _n = 0;
+      this.isValidObject = (data) => {
+        const r = tier0Validate(_plan, data);
+        if (++_n === 2) {
+          try { this._ensureCodegen(); } catch {}
+        }
+        return r;
+      };
     }
 
     // Populate identity cache so repeated `new Validator(sameSchema)` short-circuits.
