@@ -17,8 +17,16 @@ Ultra-fast JSON Schema validator powered by [simdjson](https://github.com/simdjs
 | **validate(obj)** valid | 21ns | 108ns | **ata 5.1x faster** |
 | **validate(obj)** invalid | 86ns | 104ns | **ata 1.2x faster** |
 | **isValidObject(obj)** | 20ns | 109ns | **ata 5.4x faster** |
-| **Schema compilation** | 8ns | 1.33ms | **ata 159,000x faster** |
-| **First validation** | 28ns | 1.21ms | **ata 43,000x faster** |
+| **Schema instantiation** (lazy compile) | 8ns | 1.33ms | **ata 159,000x faster** |
+| **First validation** (compile + validate) | 28ns | 1.21ms | **ata 43,000x faster** |
+
+> **Honest read of the three rows above:**
+>
+> - **Hot loop** (millions of `validate(obj)` calls on a warm validator): ata is **~5× faster** than ajv. This is the steady-state advantage and what most apps care about most of the time.
+> - **Cold start** (construct + first validate, apples-to-apples vs `ajv.compile(schema) + validate(obj)`): ata is **~43,000× faster**. Matters for serverless cold starts, CLI tools, batch workers — anywhere you instantiate a schema and exercise it once or a few times.
+> - **Instantiation only** (`new Validator(schema)` with no validation yet): ata is **~159,000× faster**, but only because ata defers codegen to first use (lazy compile + a tier-0 interpreter for low-traffic schemas). The number is real but it is constructor cost vs ajv's full compile cost — not the same unit of work. Quote it carefully.
+>
+> The lazy compile architecture is also why an instantiated-but-never-validated schema is essentially free in ata, while in ajv it costs the full compile. That's the underlying real win, beyond the multiplier above.
 
 ### Complex Schema (patternProperties + dependentSchemas + propertyNames + additionalProperties)
 
