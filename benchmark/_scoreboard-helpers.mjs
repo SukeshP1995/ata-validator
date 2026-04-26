@@ -72,10 +72,11 @@ export const REGISTRY = [
   {
     file: 'bench_all_mitata.mjs',
     metrics: {
-      'validate (valid)':                    'ecosystem.validate.valid',
-      'validate (invalid)':                  'ecosystem.validate.invalid',
-      'compilation':                         'ecosystem.compile',
-      'first validation (compile + validate)': 'ecosystem.first',
+      'validate (valid)':                       'ecosystem.validate.valid',
+      'validate (invalid, all errors)':         'ecosystem.validate.invalid',
+      'isValid (invalid, boolean)':             'ecosystem.isvalid.invalid',
+      'compilation':                            'ecosystem.compile',
+      'first validation (compile + validate)':  'ecosystem.first',
     },
   },
   {

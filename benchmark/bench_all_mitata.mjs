@@ -38,6 +38,11 @@ const ajv = new Ajv({ allErrors: true });
 addFormats(ajv);
 const ajvFn = ajv.compile(schema);
 
+// First-fail (boolean-fast-path) variant for isValid comparison
+const ajvFirst = new Ajv({ allErrors: false });
+addFormats(ajvFirst);
+const ajvFirstFn = ajvFirst.compile(schema);
+
 const zodS = z.object({
   id: z.number().int().min(1),
   name: z.string().min(1).max(100),
@@ -80,12 +85,23 @@ summary(() => {
     bench("valibot", () => do_not_optimize(v.safeParse(valS, validDoc)));
   });
 
-  group("validate (invalid)", () => {
+  // ata.validate / ajv allErrors / zod safeParse / valibot safeParse all walk
+  // the schema and collect every failure. typebox.Check is intentionally not
+  // in this group — it's first-fail boolean and lives in the next group.
+  group("validate (invalid, all errors)", () => {
     bench("ata", () => do_not_optimize(ataV.validate(invalidDoc)));
     bench("ajv", () => do_not_optimize(ajvFn(invalidDoc)));
-    bench("typebox", () => do_not_optimize(tbV.Check(invalidDoc)));
     bench("zod", () => do_not_optimize(zodS.safeParse(invalidDoc)));
     bench("valibot", () => do_not_optimize(v.safeParse(valS, invalidDoc)));
+  });
+
+  // First-fail boolean — ata.isValidObject, ajv with allErrors:false, typebox.Check.
+  // zod/valibot don't expose a directly comparable first-fail boolean primitive
+  // and are excluded from this group rather than misrepresented.
+  group("isValid (invalid, boolean)", () => {
+    bench("ata", () => do_not_optimize(ataV.isValidObject(invalidDoc)));
+    bench("ajv", () => do_not_optimize(ajvFirstFn(invalidDoc)));
+    bench("typebox", () => do_not_optimize(tbV.Check(invalidDoc)));
   });
 
   group("compilation", () => {

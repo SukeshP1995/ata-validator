@@ -65,11 +65,12 @@ Three-tier hybrid codegen: static schemas compile to zero-overhead key checks, d
 | Scenario | ata | ajv | typebox | zod | valibot |
 |---|---|---|---|---|---|
 | **validate (valid)** | **7ns** | 38ns | 50ns | 342ns | 337ns |
-| **validate (invalid)** | **38ns** | 102ns | 4ns | 11.9μs | 855ns |
+| **validate (invalid, all errors)** | **38ns** | 102ns | n/a | 11.9μs | 855ns |
+| **isValid (invalid, boolean)** | **0.93ns** | 16ns | 2.3ns | n/a | n/a |
 | **compilation** | **9ns** | 1.20ms | 53μs | n/a | n/a |
 | **first validation** | **16ns** | 1.16ms | 54μs | n/a | n/a |
 
-> Different categories: ata/ajv/typebox are JSON Schema validators, zod/valibot are schema-builder DSLs. [Benchmark code](benchmark/bench_all_mitata.mjs)
+> Different categories: ata/ajv/typebox are JSON Schema validators, zod/valibot are schema-builder DSLs. The two invalid-path rows compare different units of work — `validate(invalid, all errors)` walks the full schema and builds an errors array (apples-to-apples vs ajv `{allErrors: true}`), while `isValid(invalid, boolean)` returns false on the first failed check (apples-to-apples vs typebox `Check()` and ajv `{allErrors: false}`). Reading both rows together avoids the trap of comparing a full error walk against a first-fail boolean. [Benchmark code](benchmark/bench_all_mitata.mjs)
 
 ### Large Data - JS Object Validation
 
