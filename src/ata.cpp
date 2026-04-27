@@ -391,6 +391,10 @@ struct od_plan {
 #ifndef ATA_NO_RE2
   re2::RE2* pattern = nullptr;        // borrowed pointer from schema_node
 #endif
+  // Inline digit pattern: ^[0-9]+$ / ^[0-9]{N}$ / ^[0-9]{N,M}$ / ^\d+$ etc.
+  // When set, supersedes the RE2 pattern call.
+  struct digit_pattern_t { uint32_t min_len; uint32_t max_len; };
+  std::optional<digit_pattern_t> digit_pattern;
   uint8_t format_id = 255;            // 255 = no format check
 
   // Object — single iterate with merged required+property lookup
@@ -2410,6 +2414,59 @@ static simdjson::padded_string_view get_free_padded_view(
   return simdjson::padded_string_view(data, length, length + REQUIRED_PADDING);
 }
 
+// Recognize common digit-only regex patterns: ^[0-9]+$, ^[0-9]{N}$, ^[0-9]{N,M}$
+// (and \d variants). Returns true if recognized, fills min_n/max_n.
+static bool parse_digit_pattern(const std::string& p,
+                                uint32_t& min_n, uint32_t& max_n) {
+  if (p.size() < 6) return false;
+  if (p.front() != '^' || p.back() != '$') return false;
+  std::string_view body(p.data() + 1, p.size() - 2);
+  size_t pos = 0;
+  if (body.size() >= 5 && body.compare(0, 5, "[0-9]") == 0) {
+    pos = 5;
+  } else if (body.size() >= 2 && body[0] == '\\' && body[1] == 'd') {
+    pos = 2;
+  } else {
+    return false;
+  }
+  if (pos >= body.size()) return false;
+  char q = body[pos];
+  if (q == '+' && pos + 1 == body.size()) {
+    min_n = 1; max_n = UINT32_MAX; return true;
+  }
+  if (q == '*' && pos + 1 == body.size()) {
+    min_n = 0; max_n = UINT32_MAX; return true;
+  }
+  if (q != '{') return false;
+  size_t close = body.find('}', pos);
+  if (close == std::string_view::npos || close + 1 != body.size()) return false;
+  auto inner = body.substr(pos + 1, close - pos - 1);
+  if (inner.empty()) return false;
+  size_t comma = inner.find(',');
+  auto parse_num = [](std::string_view s, uint32_t& out) -> bool {
+    if (s.empty()) return false;
+    uint64_t v = 0;
+    for (char c : s) {
+      if (c < '0' || c > '9') return false;
+      v = v * 10 + (c - '0');
+      if (v > UINT32_MAX) return false;
+    }
+    out = static_cast<uint32_t>(v);
+    return true;
+  };
+  if (comma == std::string_view::npos) {
+    if (!parse_num(inner, min_n)) return false;
+    max_n = min_n;
+  } else {
+    auto a = inner.substr(0, comma);
+    auto b = inner.substr(comma + 1);
+    if (!parse_num(a, min_n)) return false;
+    if (b.empty()) max_n = UINT32_MAX;
+    else if (!parse_num(b, max_n)) return false;
+  }
+  return true;
+}
+
 // Build an od_plan from a schema_node tree.
 static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
   if (!node) return nullptr;
@@ -2493,6 +2550,16 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
 #ifndef ATA_NO_RE2
   plan->pattern = node->compiled_pattern.get();
 #endif
+  // Try to recognize the pattern as an inlined digit check; if so, skip RE2.
+  if (node->pattern.has_value()) {
+    uint32_t min_n, max_n;
+    if (parse_digit_pattern(*node->pattern, min_n, max_n)) {
+      plan->digit_pattern = od_plan::digit_pattern_t{min_n, max_n};
+#ifndef ATA_NO_RE2
+      plan->pattern = nullptr;
+#endif
+    }
+  }
   plan->format_id = node->format_id;
 
   // Object plan — build hash lookup for O(1) per-field dispatch
@@ -2646,8 +2713,16 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
       if (plan.min_length && len < *plan.min_length) return false;
       if (plan.max_length && len > *plan.max_length) return false;
     }
+    if (plan.digit_pattern) {
+      auto& dp = *plan.digit_pattern;
+      if (sv.size() < dp.min_len || sv.size() > dp.max_len) return false;
+      const uint8_t* p = reinterpret_cast<const uint8_t*>(sv.data());
+      for (size_t i = 0, n = sv.size(); i < n; i++) {
+        if (p[i] < '0' || p[i] > '9') return false;
+      }
+    }
 #ifndef ATA_NO_RE2
-    if (plan.pattern) {
+    else if (plan.pattern) {
       if (!re2::RE2::PartialMatch(re2::StringPiece(sv.data(), sv.size()), *plan.pattern))
         return false;
     }
