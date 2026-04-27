@@ -414,6 +414,17 @@ struct od_plan {
   };
   std::shared_ptr<arr_plan> array;
 
+  // Enum: primitive-only set membership. Complex (object/array) enums fall back.
+  struct enum_constraint {
+    std::vector<std::string> strings;   // unescaped string values
+    std::vector<int64_t> integers;
+    std::vector<double> doubles;
+    bool has_null = false;
+    bool has_true = false;
+    bool has_false = false;
+  };
+  std::shared_ptr<enum_constraint> enum_check;
+
   // If false, schema uses unsupported features — must fall back to DOM path.
   bool supported = true;
 };
@@ -2412,7 +2423,6 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
 
   // Unsupported features → fall back to DOM
   if (!node->ref.empty() ||
-      !node->enum_values_minified.empty() ||
       node->const_value_raw.has_value() ||
       node->unique_items ||
       !node->all_of.empty() ||
@@ -2429,6 +2439,47 @@ static od_plan_ptr compile_od_plan(const schema_node_ptr& node) {
       node->additional_properties_schema) {
     plan->supported = false;
     return plan;
+  }
+
+  // Enum: handle primitive enums on the on-demand path. Complex enum values
+  // (objects, arrays, escaped strings) fall back to DOM.
+  if (!node->enum_values_minified.empty()) {
+    auto ec = std::make_shared<od_plan::enum_constraint>();
+    for (const auto& ev : node->enum_values_minified) {
+      if (ev.empty()) { plan->supported = false; return plan; }
+      char c = ev[0];
+      if (c == '"') {
+        if (ev.size() < 2 || ev.back() != '"') { plan->supported = false; return plan; }
+        bool has_escape = false;
+        for (size_t i = 1; i + 1 < ev.size(); i++) {
+          if (ev[i] == '\\') { has_escape = true; break; }
+        }
+        if (has_escape) { plan->supported = false; return plan; }
+        ec->strings.push_back(ev.substr(1, ev.size() - 2));
+      } else if (c == '-' || (c >= '0' && c <= '9')) {
+        bool is_int = true;
+        for (size_t i = (c == '-' ? 1 : 0); i < ev.size(); i++) {
+          if (ev[i] < '0' || ev[i] > '9') { is_int = false; break; }
+        }
+        if (is_int) {
+          try { ec->integers.push_back(std::stoll(ev)); }
+          catch (...) { plan->supported = false; return plan; }
+        } else {
+          try { ec->doubles.push_back(std::stod(ev)); }
+          catch (...) { plan->supported = false; return plan; }
+        }
+      } else if (ev == "true") {
+        ec->has_true = true;
+      } else if (ev == "false") {
+        ec->has_false = true;
+      } else if (ev == "null") {
+        ec->has_null = true;
+      } else {
+        plan->supported = false;
+        return plan;
+      }
+    }
+    plan->enum_check = std::move(ec);
   }
 
   plan->type_mask = node->type_mask;
@@ -2552,11 +2603,12 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
 
   switch (st) {
   case sjt::number: {
-    if (!plan.num_flags) break;  // No numeric constraints
+    bool need_value = plan.num_flags || plan.enum_check;
+    if (!need_value) break;
     double v;
-    // Try integer first (more common), fall back to double
     int64_t iv;
-    if (value.get(iv) == SUCCESS) {
+    bool got_int = (value.get(iv) == SUCCESS);
+    if (got_int) {
       v = static_cast<double>(iv);
     } else if (value.get(v) != SUCCESS) {
       return false;
@@ -2569,6 +2621,20 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
     if (f & od_plan::HAS_MUL) {
       double r = std::fmod(v, plan.num_mul);
       if (std::abs(r) > 1e-8 && std::abs(r - plan.num_mul) > 1e-8) return false;
+    }
+    if (plan.enum_check) {
+      auto& ec = *plan.enum_check;
+      bool match = false;
+      if (got_int) {
+        for (auto i : ec.integers) if (i == iv) { match = true; break; }
+      }
+      if (!match) {
+        for (auto d : ec.doubles) if (d == v) { match = true; break; }
+      }
+      if (!match && got_int) {
+        for (auto d : ec.doubles) if (d == v) { match = true; break; }
+      }
+      if (!match) return false;
     }
     break;
   }
@@ -2588,6 +2654,17 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
 #endif
     if (plan.format_id != 255) {
       if (!check_format_by_id(sv, plan.format_id)) return false;
+    }
+    if (plan.enum_check) {
+      auto& ec = *plan.enum_check;
+      bool match = false;
+      for (auto& s : ec.strings) {
+        if (sv.size() == s.size() && std::memcmp(sv.data(), s.data(), s.size()) == 0) {
+          match = true;
+          break;
+        }
+      }
+      if (!match) return false;
     }
     break;
   }
@@ -2645,6 +2722,18 @@ static bool od_exec_plan(const od_plan& plan, simdjson::ondemand::value value) {
     }
     if (ap.min_items && count < *ap.min_items) return false;
     if (ap.max_items && count > *ap.max_items) return false;
+    break;
+  }
+  case sjt::boolean: {
+    if (plan.enum_check) {
+      bool b;
+      if (value.get(b) != SUCCESS) return false;
+      if (b ? !plan.enum_check->has_true : !plan.enum_check->has_false) return false;
+    }
+    break;
+  }
+  case sjt::null: {
+    if (plan.enum_check && !plan.enum_check->has_null) return false;
     break;
   }
   default:

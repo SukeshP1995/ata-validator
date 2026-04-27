@@ -183,6 +183,50 @@ test("batchIsValid: rejects non-buffer element", () => {
   assert(threw, "should throw TypeError when an element isn't a Buffer/Uint8Array");
 });
 
+test("isValid: string enum (on-demand fast path)", () => {
+  const v = new Validator({
+    type: "object",
+    properties: { role: { enum: ["admin", "user", "moderator"] } },
+    required: ["role"],
+  });
+  const long = "a".repeat(100); // > 32 byte threshold for OD path
+  assert(v.isValid(Buffer.from(`{"role":"admin","_pad":"${long}"}`)) === true);
+  assert(v.isValid(Buffer.from(`{"role":"user","_pad":"${long}"}`)) === true);
+  assert(v.isValid(Buffer.from(`{"role":"hacker","_pad":"${long}"}`)) === false);
+});
+
+test("isValid: number enum", () => {
+  const v = new Validator({
+    type: "object",
+    properties: { code: { enum: [1, 2, 3] } },
+    required: ["code"],
+  });
+  const long = "a".repeat(100);
+  assert(v.isValid(Buffer.from(`{"code":1,"_pad":"${long}"}`)) === true);
+  assert(v.isValid(Buffer.from(`{"code":7,"_pad":"${long}"}`)) === false);
+});
+
+test("isValid: mixed enum with null", () => {
+  const v = new Validator({ enum: ["a", null, true] });
+  // small payloads use DOM path, but should still be correct
+  assert(v.isValid(Buffer.from('"a"')) === true);
+  assert(v.isValid(Buffer.from('null')) === true);
+  assert(v.isValid(Buffer.from('true')) === true);
+  assert(v.isValid(Buffer.from('"b"')) === false);
+  assert(v.isValid(Buffer.from('false')) === false);
+});
+
+test("isValid: object enum falls back to DOM correctly", () => {
+  const v = new Validator({
+    type: "object",
+    properties: { tag: { enum: [{ a: 1 }, { b: 2 }] } },
+    required: ["tag"],
+  });
+  const long = "a".repeat(100);
+  assert(v.isValid(Buffer.from(`{"tag":{"a":1},"_pad":"${long}"}`)) === true);
+  assert(v.isValid(Buffer.from(`{"tag":{"a":2},"_pad":"${long}"}`)) === false);
+});
+
 // --- V8 Fast API: countValid ---
 
 test("countValid: NDJSON buffer", () => {
