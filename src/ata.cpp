@@ -27,21 +27,7 @@
 #ifndef __builtin_popcount
 #define __builtin_popcount __popcnt
 #endif
-static inline int __builtin_ctzll(unsigned long long v) {
-  unsigned long idx;
-  _BitScanForward64(&idx, v);
-  return (int)idx;
-}
 #endif // defined(_MSC_VER) && !defined(__clang__)
-
-// Cross-compiler always-inline. MSVC uses __forceinline; GCC/Clang use the
-// __attribute__((always_inline)) attribute (which still requires `inline`
-// to actually inline at every call site).
-#if defined(_MSC_VER) && !defined(__clang__)
-#define ATA_ALWAYS_INLINE __forceinline
-#else
-#define ATA_ALWAYS_INLINE inline __attribute__((always_inline))
-#endif
 
 #include "simdjson.h"
 
@@ -56,7 +42,7 @@ static bool is_hex(char c) {
   return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
-ATA_ALWAYS_INLINE static bool fast_check_email(std::string_view s) {
+__attribute__((always_inline)) static inline bool fast_check_email(std::string_view s) {
   auto at = s.find('@');
   if (at == std::string_view::npos || at == 0 || at == s.size() - 1)
     return false;
@@ -158,7 +144,7 @@ static bool fast_check_hostname(std::string_view s) {
 }
 
 // Check format by pre-resolved numeric ID — no string comparisons.
-ATA_ALWAYS_INLINE static bool check_format_by_id(std::string_view sv, uint8_t fid) {
+__attribute__((always_inline)) static inline bool check_format_by_id(std::string_view sv, uint8_t fid) {
   switch (fid) {
     case 0: return fast_check_email(sv);
     case 1: return fast_check_date(sv);
@@ -2855,7 +2841,7 @@ static bool compute_fast_scan_eligible(const od_plan& plan) {
 // Fast path: most of the time *p is a structural char > 0x20, so the single
 // initial test exits with no branching cost. The slow inner loop only runs
 // when whitespace is actually present.
-ATA_ALWAYS_INLINE static void scan_skip_ws(const char*& p, const char* end) {
+__attribute__((always_inline)) static inline void scan_skip_ws(const char*& p, const char* end) {
   if (p >= end || (uint8_t)*p > 0x20) return;
   while (p < end) {
     uint8_t c = (uint8_t)*p;
@@ -2868,7 +2854,7 @@ ATA_ALWAYS_INLINE static void scan_skip_ws(const char*& p, const char* end) {
 //   ok       — out holds the value
 //   fail     — not a valid number start (caller treats as schema failure)
 //   fallback — overflow or contains '.', 'e', 'E' (caller restarts on-demand)
-ATA_ALWAYS_INLINE static scan_result scan_integer_value(const char*& p, const char* end, int64_t& out) {
+__attribute__((always_inline)) static inline scan_result scan_integer_value(const char*& p, const char* end, int64_t& out) {
   // Pre-condition (verified by every call site in this file): p < end and
   // *p is '-' or '0'..'9'. Skipping the redundant guard saves ~3 cycles
   // per integer in the hot loop.
@@ -2908,7 +2894,7 @@ static scan_result fast_scan_array(const od_plan& plan, const char*& p, const ch
 // a time (SWAR), applies constraints, advances p past the closing '"'.
 // Buffer padding (REQUIRED_PADDING = 64) guarantees the over-read of the
 // final block stays in addressable memory.
-ATA_ALWAYS_INLINE static scan_result fast_scan_string(const od_plan& plan, const char*& p, const char* end) {
+__attribute__((always_inline)) static inline scan_result fast_scan_string(const od_plan& plan, const char*& p, const char* end) {
   const char* s_start = p;
   bool has_high = false;
 
