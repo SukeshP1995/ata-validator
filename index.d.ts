@@ -81,6 +81,17 @@ export class Validator {
   /** Generate a standalone JS module string for zero-compile loading. Returns null if schema can't be standalone-compiled. */
   toStandalone(): string | null;
 
+  /**
+   * Generate a self-contained module string with `validate`/`isValid` exports.
+   * The output has zero runtime dependency on ata-validator.
+   *
+   * - format: 'esm' (default) or 'cjs'.
+   * - abortEarly: if true, invalid results are a shared frozen stub (smaller output, no error details).
+   *
+   * Returns null if the schema cannot be compiled to a standalone module.
+   */
+  toStandaloneModule(options?: { format?: 'esm' | 'cjs'; abortEarly?: boolean }): string | null;
+
   /** Load a pre-compiled standalone module. Zero schema compilation at startup. */
   static fromStandalone(mod: StandaloneModule, schema: object | string, options?: ValidatorOptions): Validator;
 

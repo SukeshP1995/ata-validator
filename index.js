@@ -290,14 +290,41 @@ const _CP_LEN_SOURCE = `function _cpLen(s) {
 // (which must materialize the full JS object tree). Buffer.from + NAPI ~2x faster.
 const SIMDJSON_THRESHOLD = 8192;
 
+// Resolve a JSON Schema path like "#/properties/name/type" to the schema object
+// that *contains* the failing keyword. Used by verbose mode to populate
+// `parentSchema` on validation errors. Returns undefined if the path can't be
+// walked (malformed pointer or missing intermediate node).
+function resolveSchemaByPath(rootSchema, schemaPath) {
+  if (!schemaPath || typeof schemaPath !== 'string' || !schemaPath.startsWith('#')) {
+    return undefined;
+  }
+  const stripped = schemaPath.slice(1);
+  if (!stripped || stripped === '/') return rootSchema;
+  const parts = stripped.split('/').filter(Boolean).map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
+  // The last segment is the keyword that failed (e.g. "type"); parentSchema is
+  // the schema object that owns that keyword, so walk all but the last segment.
+  let target = rootSchema;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (target == null || typeof target !== 'object') return undefined;
+    target = target[parts[i]];
+  }
+  return target;
+}
+
 function parsePointerPath(path) {
   if (!path) return [];
   return path
     .split("/")
     .filter(Boolean)
-    .map((seg) => ({
-      key: seg.replace(/~1/g, "/").replace(/~0/g, "~"),
-    }));
+    .map((seg) => {
+      const decoded = seg.replace(/~1/g, "/").replace(/~0/g, "~");
+      // Per Standard Schema V1: array indices should be emitted as numbers,
+      // object keys as strings. Treat all-digit segments as numeric indices.
+      if (/^(0|[1-9][0-9]*)$/.test(decoded)) {
+        return { key: Number(decoded) };
+      }
+      return { key: decoded };
+    });
 }
 
 function createPaddedBuffer(jsonStr) {
@@ -365,6 +392,15 @@ class Validator {
 
     // Schema map for cross-schema $ref resolution
     this._schemaMap = buildSchemaMap(options.schemas) || new Map();
+
+    // User-supplied format checkers: { formatName: (value) => boolean }.
+    // Looked up at runtime when a schema references a format the built-in
+    // registry does not know about.
+    this._userFormats = options.formats || null;
+
+    // Verbose mode: when on, errors carry parentSchema (the schema object that
+    // produced the error). Matches ajv's `verbose: true` behavior.
+    this._verbose = !!options.verbose;
 
     // Lazy stubs: trigger compilation on first call, then re-dispatch
     this.validate = (data) => {
@@ -464,7 +500,9 @@ class Validator {
     const mapKey = this._schemaMap.size > 0
       ? this._schemaStr + '\0' + [...this._schemaMap.keys()].sort().join('\0')
       : this._schemaStr;
-    const cached = _compileCache.get(mapKey);
+    // Custom formats are JS functions: bypass the compile cache since they can
+    // differ between validators that share the same schema string.
+    const cached = this._userFormats ? null : _compileCache.get(mapKey);
     let jsFn, jsCombinedFn, jsErrFn, _isCodegen = false;
     var _forceNapi = typeof process !== 'undefined' && process.env && process.env.ATA_FORCE_NAPI;
     if (cached && !_forceNapi) {
@@ -473,12 +511,15 @@ class Validator {
       jsErrFn = cached.errFn;
       _isCodegen = !!cached.isCodegen;
     } else if (!_forceNapi) {
-      const _cgFn = compileToJSCodegen(schemaObj, sm);
+      const uf = this._userFormats;
+      const _cgFn = compileToJSCodegen(schemaObj, sm, uf);
       jsFn = _cgFn || compileToJS(schemaObj, null, sm);
-      jsCombinedFn = compileToJSCombined(schemaObj, VALID_RESULT, sm);
-      jsErrFn = compileToJSCodegenWithErrors(schemaObj, sm);
+      jsCombinedFn = compileToJSCombined(schemaObj, VALID_RESULT, sm, uf);
+      jsErrFn = compileToJSCodegenWithErrors(schemaObj, sm, uf);
       _isCodegen = !!_cgFn;
-      _compileCache.set(mapKey, { jsFn, combined: jsCombinedFn, errFn: jsErrFn, isCodegen: _isCodegen });
+      if (!uf) {
+        _compileCache.set(mapKey, { jsFn, combined: jsCombinedFn, errFn: jsErrFn, isCodegen: _isCodegen });
+      }
     } else {
       jsFn = null; jsCombinedFn = null; jsErrFn = null;
     }
@@ -616,6 +657,24 @@ class Validator {
                 return jsFn(data) ? VALID_RESULT : errFn(data);
               }
             : (data) => (jsFn(data) ? VALID_RESULT : errFn(data));
+      }
+      // Verbose mode: populate parentSchema on each error.
+      // Errors may be frozen, so clone them with the extra field.
+      if (this._verbose) {
+        const inner = this.validate;
+        const root = this._schemaObj;
+        this.validate = (data) => {
+          const result = inner(data);
+          if (result && !result.valid && result.errors) {
+            const enriched = result.errors.map((err) =>
+              err && err.parentSchema === undefined
+                ? { ...err, parentSchema: resolveSchemaByPath(root, err.schemaPath) }
+                : err
+            );
+            return { valid: false, errors: enriched };
+          }
+          return result;
+        };
       }
       this.isValidObject = jsFn;
       const hybridFn = jsFn._hybridFactory
@@ -821,19 +880,24 @@ class Validator {
     const mapKey = this._schemaMap.size > 0
       ? this._schemaStr + '\0' + [...this._schemaMap.keys()].sort().join('\0')
       : this._schemaStr;
-    const cached = _compileCache.get(mapKey);
+    // Custom formats are JS functions: skip the shared cache so different
+    // validators with the same schema string but different formats don't collide.
+    const cached = this._userFormats ? null : _compileCache.get(mapKey);
     if (cached && cached.jsFn) {
       this._jsFn = cached.jsFn;
       this.isValidObject = cached.jsFn;
       return;
     }
-    const jsFn = compileToJSCodegen(this._schemaObj, sm) || compileToJS(this._schemaObj, null, sm);
+    const uf = this._userFormats;
+    const jsFn = compileToJSCodegen(this._schemaObj, sm, uf) || compileToJS(this._schemaObj, null, sm);
     this._jsFn = jsFn;
     if (jsFn) {
       this.isValidObject = jsFn;
       // seed cache with codegen, combined/errFn filled later by _ensureCompiled
-      if (!cached) _compileCache.set(mapKey, { jsFn, combined: null, errFn: null });
-      else cached.jsFn = jsFn;
+      if (!uf) {
+        if (!cached) _compileCache.set(mapKey, { jsFn, combined: null, errFn: null });
+        else cached.jsFn = jsFn;
+      }
     }
   }
 
@@ -1122,15 +1186,21 @@ Validator.bundle = function (schemas, opts) {
 };
 
 // Zero-dependency self-contained bundle — no require('ata-validator') needed at runtime.
+// opts.format: 'cjs' (default) or 'esm'.
 Validator.bundleStandalone = function (schemas, opts) {
+  // Cross-schema $ref resolution: every Validator in the bundle needs to know
+  // about the others so $ref to a sibling $id can resolve at compile time.
+  const bundleOpts = { ...(opts || {}), schemas };
+  const format = (opts && opts.format) || 'cjs';
   const R = "Object.freeze({valid:true,errors:Object.freeze([])})";
   const fns = schemas.map((schema) => {
-    const v = new Validator(schema, opts);
+    const v = new Validator(schema, bundleOpts);
     v._ensureCompiled();
     const jsFn = v._jsFn;
     if (!jsFn || !jsFn._hybridSource) return "null";
     const jsErrFn = compileToJSCodegenWithErrors(
       typeof schema === "string" ? JSON.parse(schema) : schema,
+      v._schemaMap,
     );
     const errBody =
       jsErrFn && jsErrFn._errSource
@@ -1138,6 +1208,10 @@ Validator.bundleStandalone = function (schemas, opts) {
         : "return{valid:false,errors:[{code:'error',path:'',message:'validation failed'}]}";
     return `(function(R){var E=function(d){var _all=true;${errBody}};return function(d){${jsFn._hybridSource}}})(R)`;
   });
+  const arr = `[${fns.join(",")}]`;
+  if (format === 'esm') {
+    return `// Auto-generated by ata-validator — do not edit\nconst R=${R};\nconst validators=${arr};\nexport default validators;\nexport { validators };\n`;
+  }
   return `'use strict';\nvar R=${R};\nmodule.exports=[${fns.join(",")}];\n`;
 };
 
