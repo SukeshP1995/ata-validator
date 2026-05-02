@@ -4,7 +4,16 @@ export interface ValidationError {
   schemaPath: string;
   params: Record<string, unknown>;
   message: string;
+  /**
+   * The schema object that owns the failing keyword. Populated only when the
+   * Validator was constructed with `verbose: true`. Matches ajv's `verbose`
+   * behavior.
+   */
+  parentSchema?: object;
 }
+
+/** A user-supplied format checker. Receives the candidate value, returns true if valid. */
+export type FormatChecker = (value: string) => boolean;
 
 export interface ValidationResult {
   valid: boolean;
@@ -21,6 +30,26 @@ export interface ValidatorOptions {
   coerceTypes?: boolean;
   removeAdditional?: boolean;
   schemas?: Record<string, object> | object[];
+  /**
+   * Custom format checkers. Keys are format names referenced from `format` in
+   * the schema. Values are functions that return true when the input is valid.
+   */
+  formats?: Record<string, FormatChecker>;
+  /**
+   * When true, validation errors include `parentSchema` (the schema object
+   * that produced the error). Matches ajv's `verbose: true`.
+   */
+  verbose?: boolean;
+  /**
+   * When true, validate() returns a shared frozen result on the first failure
+   * instead of collecting full error details. Smaller hot-path allocation.
+   */
+  abortEarly?: boolean;
+}
+
+export interface BundleStandaloneOptions extends ValidatorOptions {
+  /** Module format for the emitted bundle. Default: 'cjs'. */
+  format?: 'esm' | 'cjs';
 }
 
 export interface StandardSchemaV1Props {
@@ -30,7 +59,13 @@ export interface StandardSchemaV1Props {
     value: unknown
   ):
     | { value: unknown }
-    | { issues: Array<{ message: string; path?: ReadonlyArray<{ key: PropertyKey }> }> };
+    | {
+        issues: Array<{
+          message: string;
+          /** Array indices are emitted as numbers, object keys as strings. */
+          path?: ReadonlyArray<{ key: PropertyKey }>;
+        }>;
+      };
 }
 
 export interface StandaloneModule {
@@ -98,8 +133,12 @@ export class Validator {
   /** Bundle multiple schemas into a single JS module string. Load with Validator.loadBundle(). */
   static bundle(schemas: object[], options?: ValidatorOptions): string;
 
-  /** Bundle multiple schemas into a self-contained JS module. No ata-validator import needed at runtime. */
-  static bundleStandalone(schemas: object[], options?: ValidatorOptions): string;
+  /**
+   * Bundle multiple schemas into a self-contained JS module with no
+   * ata-validator runtime dependency. Cross-schema `$ref` resolves between
+   * the supplied schemas. Set `format: 'esm'` for ESM output (default 'cjs').
+   */
+  static bundleStandalone(schemas: object[], options?: BundleStandaloneOptions): string;
 
   /** Bundle multiple schemas with deduplicated shared templates. Smaller output than bundle(). */
   static bundleCompact(schemas: object[], options?: ValidatorOptions): string;
