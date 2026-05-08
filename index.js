@@ -969,6 +969,10 @@ module.exports = { boolFn, hybridFactory, errFn };
     if (jsFn._closures && jsFn._closures.length > 0) {
       const lines = [];
       for (const { name, val } of jsFn._closures) {
+        if (Array.isArray(val)) {
+          lines.push(`const ${name} = ${JSON.stringify(val)};`);
+          continue;
+        }
         if (val instanceof RegExp) {
           const flags = val.flags;
           lines.push(`const ${name} = new RegExp(${JSON.stringify(val.source)}${flags ? ', ' + JSON.stringify(flags) : ''});`);
