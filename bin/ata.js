@@ -48,7 +48,15 @@ function parseArgs(argv) {
     if (a === '--check') { out.opts.check = true; continue; }
     if (a === '--out-dir') { out.opts.outDir = argv[++i]; continue; }
     if (a === '--suffix') { out.opts.suffix = argv[++i]; continue; }
-    if (a === '--max-size') { out.opts.maxSize = Number(argv[++i]); continue; }
+    if (a === '--max-size') {
+      const v = argv[++i];
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+        throw new Error(`--max-size requires a positive integer (got "${v}")`);
+      }
+      out.opts.maxSize = n;
+      continue;
+    }
     if (a.startsWith('-')) { throw new Error(`Unknown option: ${a}`); }
     out._.push(a);
   }
