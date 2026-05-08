@@ -17,6 +17,8 @@ export interface BuildOptions {
   maxSize?: number;
   /** When true, AOT-incompatible schemas become failures (default: skipped). */
   strict?: boolean;
+  /** Emit a .d.mts/.d.cts/.d.ts sibling for each compiled module. Default: true. */
+  types?: boolean;
 }
 
 export interface CompiledEntry {

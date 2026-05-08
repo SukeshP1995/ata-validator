@@ -177,6 +177,24 @@ console.log('\nata aot build tests\n');
       const buildEsm = await import('file://' + path.join(__dirname, '..', 'build.mjs'));
       assert(typeof buildEsm.build === 'function', 'build.mjs should export `build`');
     }],
+
+    ['build: emits .d.mts alongside .compiled.mjs by default', async () => {
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 't.schema.json'));
+      await build({ globs: [path.join(dir, '*.schema.json')] });
+      assert(fs.existsSync(path.join(dir, 't.compiled.mjs')), 'expected .compiled.mjs');
+      assert(fs.existsSync(path.join(dir, 't.compiled.d.mts')), 'expected .d.mts sibling');
+      const dts = fs.readFileSync(path.join(dir, 't.compiled.d.mts'), 'utf8');
+      assert(/export .*validate/.test(dts), `expected validate export in dts: ${dts}`);
+    }],
+
+    ['build: --no-types skips dts emission', async () => {
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'u.schema.json'));
+      await build({ globs: [path.join(dir, '*.schema.json')], types: false });
+      assert(fs.existsSync(path.join(dir, 'u.compiled.mjs')), 'expected .compiled.mjs');
+      assert(!fs.existsSync(path.join(dir, 'u.compiled.d.mts')), 'expected NO .d.mts');
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }

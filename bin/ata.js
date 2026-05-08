@@ -27,6 +27,7 @@ Build options:
   --max-size <bytes>      Fail build if any compiled module exceeds this gzipped size
   --strict                Treat any AOT-incompatible schema as a build error (default: skip + warn)
   --watch                 Re-emit on schema change (Ctrl-C to exit)
+  --no-types              Skip .d.mts/.d.cts emission alongside compiled modules
 
   -h, --help              Show this message
 
@@ -160,6 +161,7 @@ function cmdBuild(args) {
     check: !!args.opts.check,
     maxSize: args.opts.maxSize,
     strict: !!args.opts.strict,
+    types: args.opts.types,
   };
 
   const printReport = (report) => {
