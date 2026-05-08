@@ -48,6 +48,7 @@
     "fuzz:long": "FUZZ_ITERATIONS=100000 node tests/fuzz_differential.js",
     "test:aot": "node tests/test_aot_build.js",
     "test:aot-differential": "node tests/test_aot_differential.js",
+    "test:aot-cli": "node tests/test_aot_cli_build.js",
     "test:json-suite": "node tests/run_json_test_suite.js"
   },
   "keywords": [

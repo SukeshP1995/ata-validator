@@ -8,20 +8,28 @@ function usage() {
   process.stdout.write(`ata-validator CLI
 
 Usage:
-  ata compile <schema-file> [options]
+  ata compile <schema-file> [options]   Compile one schema to a standalone module.
+  ata build   <glob>...    [options]    Compile a project's schemas (glob pattern) per file.
 
-Options:
+Compile options:
   -o, --output <file>     Output path. Default: <schema-file>.validator.mjs
   -f, --format <fmt>      Module format: esm | cjs. Default: esm
   --name <TypeName>       Name of the top-level type in .d.ts. Default: inferred from filename
   --no-types              Skip .d.ts generation
   --abort-early           Use stub errors (smallest bundle)
+
+Build options:
+  --out-dir <dir>         Write outputs into this directory instead of alongside sources
+  --suffix <str>          Output filename suffix (default: ".compiled")
+  -f, --format <fmt>      Module format: esm | cjs. Default: esm
+  --abort-early           Use stub errors (smallest bundle)
+
   -h, --help              Show this message
 
 Examples:
   ata compile schemas/user.json -o src/generated/user.validator.mjs
-  ata compile schemas/user.json --format cjs -o dist/user.validator.cjs
-  ata compile schemas/public-api.json --abort-early -o dist/api.mjs
+  ata build 'schemas/*.json'
+  ata build 'src/**/*.schema.json' --out-dir build/validators
 `);
 }
 
@@ -35,6 +43,8 @@ function parseArgs(argv) {
     if (a === '--name') { out.opts.name = argv[++i]; continue; }
     if (a === '--no-types') { out.opts.types = false; continue; }
     if (a === '--abort-early') { out.opts.abortEarly = true; continue; }
+    if (a === '--out-dir') { out.opts.outDir = argv[++i]; continue; }
+    if (a === '--suffix') { out.opts.suffix = argv[++i]; continue; }
     if (a.startsWith('-')) { throw new Error(`Unknown option: ${a}`); }
     out._.push(a);
   }
@@ -113,6 +123,41 @@ function cmdCompile(args) {
   }
 }
 
+function cmdBuild(args) {
+  if (args._.length === 0) {
+    process.stderr.write('error: missing <glob>\n\n');
+    usage();
+    process.exit(1);
+  }
+  const { build } = require('../lib/aot-build');
+  const format = args.opts.format || 'esm';
+  if (format !== 'esm' && format !== 'cjs') {
+    process.stderr.write(`error: --format must be esm or cjs (got "${format}")\n`);
+    process.exit(1);
+  }
+  build({
+    globs: args._,
+    format,
+    outDir: args.opts.outDir,
+    suffix: args.opts.suffix,
+    abortEarly: !!args.opts.abortEarly,
+  }).then((report) => {
+    for (const c of report.compiled) {
+      process.stdout.write(`ata: ${c.input} -> ${c.output} (${c.bytes.toLocaleString()} bytes)\n`);
+    }
+    for (const s of report.skipped) {
+      process.stdout.write(`ata: skipped ${s.input}: ${s.reason}\n`);
+    }
+    for (const f of report.failed) {
+      process.stderr.write(`ata: failed  ${f.input}: ${f.error}\n`);
+    }
+    if (report.failed.length > 0) process.exit(1);
+  }).catch((e) => {
+    process.stderr.write(`error: ${e.message}\n`);
+    process.exit(1);
+  });
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0) { usage(); process.exit(0); }
@@ -133,6 +178,11 @@ function main() {
 
   if (cmd === 'compile') {
     cmdCompile(args);
+    return;
+  }
+
+  if (cmd === 'build') {
+    cmdBuild(args);
     return;
   }
 
