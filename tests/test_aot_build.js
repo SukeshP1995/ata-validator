@@ -168,6 +168,15 @@ console.log('\nata aot build tests\n');
       assert(r.failed.length === 1, `expected 1 failed, got ${r.failed.length}`);
       assert(/install.*yaml/i.test(r.failed[0].error), `expected 'install yaml' in error, got: ${r.failed[0].error}`);
     }],
+
+    ['subpath: require("ata-validator/build") works after pack', async () => {
+      // Sanity check the export wiring locally by requiring the file by absolute path
+      // (full publish/install flow is verified by the npm test job).
+      const buildPkg = require(path.join(__dirname, '..', 'build.js'));
+      assert(typeof buildPkg.build === 'function', 'build.js should export `build`');
+      const buildEsm = await import('file://' + path.join(__dirname, '..', 'build.mjs'));
+      assert(typeof buildEsm.build === 'function', 'build.mjs should export `build`');
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }

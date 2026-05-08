@@ -20,6 +20,11 @@
       "import": "./compat.mjs",
       "require": "./compat.js"
     },
+    "./build": {
+      "types": "./build.d.ts",
+      "import": "./build.mjs",
+      "require": "./build.js"
+    },
     "./package.json": "./package.json"
   },
   "sideEffects": false,
@@ -88,6 +93,9 @@
     "compat.js",
     "compat.mjs",
     "compat.d.ts",
+    "build.js",
+    "build.mjs",
+    "build.d.ts",
     "binding-options.js",
     "binding/",
     "include/",

@@ -1,0 +1,7 @@
+import mod from './build.js';
+
+export const build = mod.build;
+export const expandGlobs = mod.expandGlobs;
+export const parseSchemaFile = mod.parseSchemaFile;
+export const outputPathFor = mod.outputPathFor;
+export default mod;
