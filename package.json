@@ -40,7 +40,7 @@
     "rebuild": "cmake-js rebuild --target ata",
     "prebuild": "pkg-prebuilds-copy --baseDir build/Release --source ata.node --name=ata --strip --napi_version=10",
     "prebuild-all": "npm run prebuild -- --arch x64 && npm run prebuild -- --arch arm64",
-    "test": "node test.js",
+    "test": "node test.js && node tests/test_aot_build.js && node tests/test_aot_differential.js && node tests/test_aot_cli_build.js",
     "test:suite": "node tests/run_suite.js",
     "test:compat": "node tests/test_compat.js",
     "test:standard-schema": "node tests/test_standard_schema.js",

@@ -265,6 +265,14 @@ CLI options:
 | `--abort-early` | off | Generate the stub-error variant (~0.5 KB gzipped) |
 | `--no-types` | off | Skip the `.d.mts` / `.d.cts` output |
 
+For a project with many schemas, `ata build <glob>` compiles them all in one command:
+
+```bash
+npx ata build 'schemas/*.json' --out-dir build/validators --check
+```
+
+Run with `--watch` during development for incremental rebuilds.
+
 Typical bundle sizes (10-field user schema, gzipped):
 
 | Variant | Size | Notes |
