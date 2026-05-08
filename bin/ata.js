@@ -24,6 +24,7 @@ Build options:
   -f, --format <fmt>      Module format: esm | cjs. Default: esm
   --abort-early           Use stub errors (smallest bundle)
   --check                 Check (don't write); exit 1 if any output is stale
+  --max-size <bytes>      Fail build if any compiled module exceeds this gzipped size
 
   -h, --help              Show this message
 
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     if (a === '--check') { out.opts.check = true; continue; }
     if (a === '--out-dir') { out.opts.outDir = argv[++i]; continue; }
     if (a === '--suffix') { out.opts.suffix = argv[++i]; continue; }
+    if (a === '--max-size') { out.opts.maxSize = Number(argv[++i]); continue; }
     if (a.startsWith('-')) { throw new Error(`Unknown option: ${a}`); }
     out._.push(a);
   }
@@ -144,6 +146,7 @@ function cmdBuild(args) {
     suffix: args.opts.suffix,
     abortEarly: !!args.opts.abortEarly,
     check: !!args.opts.check,
+    maxSize: args.opts.maxSize,
   }).then((report) => {
     if (args.opts.check) {
       process.stdout.write(`ata: check — ${report.cached.length} up to date, ${report.staleCount} stale\n`);

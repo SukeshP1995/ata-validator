@@ -106,6 +106,22 @@ console.log('\nata aot build tests\n');
       const r = await build({ globs: [path.join(dir, '*.schema.json')], cacheFile, check: true });
       assert(r.staleCount === 0, `expected 0 stale, got ${r.staleCount}`);
     }],
+
+    ['build: --max-size fails when output exceeds budget', async () => {
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/complex.schema.json'), path.join(dir, 'big.schema.json'));
+      const r = await build({ globs: [path.join(dir, '*.schema.json')], maxSize: 100 });
+      assert(r.failed.length === 1, `expected 1 failed (over budget), got ${r.failed.length}`);
+      assert(/exceeds.*max/i.test(r.failed[0].error), `expected size-budget error, got: ${r.failed[0].error}`);
+    }],
+
+    ['build: --max-size passes when output fits', async () => {
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'small.schema.json'));
+      const r = await build({ globs: [path.join(dir, '*.schema.json')], maxSize: 1_000_000 });
+      assert(r.failed.length === 0, `expected 0 failed, got ${r.failed.length}`);
+      assert(r.compiled.length === 1, `expected 1 compiled, got ${r.compiled.length}`);
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }
