@@ -964,6 +964,28 @@ module.exports = { boolFn, hybridFactory, errFn };
       }
     }
 
+    // Serialize closure vars referenced in _fn body: regex, sub-validators, sets.
+    let closureDecls = '';
+    if (jsFn._closures && jsFn._closures.length > 0) {
+      const lines = [];
+      for (const { name, val } of jsFn._closures) {
+        if (val instanceof RegExp) {
+          const flags = val.flags;
+          lines.push(`const ${name} = new RegExp(${JSON.stringify(val.source)}${flags ? ', ' + JSON.stringify(flags) : ''});`);
+        } else if (val instanceof Set) {
+          lines.push(`const ${name} = new Set(${JSON.stringify([...val])});`);
+        } else if (typeof val === 'function') {
+          // new Function('_ppv', body) — extract body from toString()
+          const str = val.toString();
+          // Matches: "function anonymous(_ppv\n) {\nbody\n}" or "function(_ppv){body}"
+          const m = str.match(/^function[^(]*\([^)]*\)\s*\{([\s\S]*)\}$/)
+          const body = m ? m[1].trim() : str;
+          lines.push(`const ${name} = function(_ppv) { ${body} };`);
+        }
+      }
+      if (lines.length) closureDecls = lines.join('\n') + '\n';
+    }
+
     const validBody = errCore
       ? 'return _fn(data) ? VALID : { valid: false, errors: errFn(data, true).errors }'
       : 'return _fn(data) ? VALID : ABORT';
@@ -978,7 +1000,7 @@ module.exports = { boolFn, hybridFactory, errFn };
 ${_CP_LEN_SOURCE}
 const VALID = Object.freeze({ valid: true, errors: Object.freeze([]) });
 const ABORT = Object.freeze({ valid: false, errors: Object.freeze([Object.freeze({ message: 'validation failed' })]) });
-const _fn = function(d) {
+${closureDecls}const _fn = function(d) {
   ${src}
 };
 ${errCore}function isValid(data) { return _fn(data); }
