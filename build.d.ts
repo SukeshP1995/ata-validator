@@ -54,3 +54,8 @@ export function build(opts: BuildOptions): Promise<BuildReport>;
 export function expandGlobs(globs: string[]): Promise<string[]>;
 export function parseSchemaFile(filePath: string): unknown;
 export function outputPathFor(input: string, opts: { format?: 'esm' | 'cjs'; outDir?: string; suffix?: string }): string;
+
+export interface WatchHandle {
+  close(): void;
+}
+export function watch(opts: BuildOptions, onReport?: (r: BuildReport) => void): Promise<WatchHandle>;

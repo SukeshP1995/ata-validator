@@ -26,6 +26,7 @@ Build options:
   --check                 Check (don't write); exit 1 if any output is stale
   --max-size <bytes>      Fail build if any compiled module exceeds this gzipped size
   --strict                Treat any AOT-incompatible schema as a build error (default: skip + warn)
+  --watch                 Re-emit on schema change (Ctrl-C to exit)
 
   -h, --help              Show this message
 
@@ -59,6 +60,7 @@ function parseArgs(argv) {
       out.opts.maxSize = n;
       continue;
     }
+    if (a === '--watch') { out.opts.watch = true; continue; }
     if (a.startsWith('-')) { throw new Error(`Unknown option: ${a}`); }
     out._.push(a);
   }
@@ -143,13 +145,13 @@ function cmdBuild(args) {
     usage();
     process.exit(1);
   }
-  const { build } = require('../lib/aot-build');
+  const buildLib = require('../lib/aot-build');
   const format = args.opts.format || 'esm';
   if (format !== 'esm' && format !== 'cjs') {
     process.stderr.write(`error: --format must be esm or cjs (got "${format}")\n`);
     process.exit(1);
   }
-  build({
+  const buildOpts = {
     globs: args._,
     format,
     outDir: args.opts.outDir,
@@ -158,10 +160,11 @@ function cmdBuild(args) {
     check: !!args.opts.check,
     maxSize: args.opts.maxSize,
     strict: !!args.opts.strict,
-  }).then((report) => {
+  };
+
+  const printReport = (report) => {
     if (args.opts.check) {
       process.stdout.write(`ata: check — ${report.cached.length} up to date, ${report.staleCount} stale\n`);
-      if (report.staleCount > 0) process.exit(1);
       return;
     }
     for (const c of report.compiled) {
@@ -176,6 +179,24 @@ function cmdBuild(args) {
     for (const f of report.failed) {
       process.stderr.write(`ata: failed  ${f.input}: ${f.error}\n`);
     }
+  };
+
+  if (args.opts.watch) {
+    let handle;
+    buildLib.watch(buildOpts, printReport).then((h) => {
+      handle = h;
+      process.stdout.write('ata: watching for changes (Ctrl-C to exit)\n');
+    });
+    process.on('SIGINT', () => {
+      if (handle) handle.close();
+      process.exit(0);
+    });
+    return;
+  }
+
+  buildLib.build(buildOpts).then((report) => {
+    printReport(report);
+    if (args.opts.check && report.staleCount > 0) process.exit(1);
     if (report.failed.length > 0) process.exit(1);
   }).catch((e) => {
     process.stderr.write(`error: ${e.message}\n`);

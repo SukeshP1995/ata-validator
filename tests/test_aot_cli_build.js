@@ -8,10 +8,10 @@ const { spawnSync } = require('child_process');
 const CLI = path.join(__dirname, '..', 'bin', 'ata.js');
 const FIXTURES = path.join(__dirname, 'fixtures/aot-build');
 
+const tests = [];
 let passed = 0, failed = 0;
 function test(name, fn) {
-  try { fn(); console.log(`  PASS  ${name}`); passed++; }
-  catch (e) { console.log(`  FAIL  ${name}: ${e.message}`); failed++; }
+  tests.push([name, fn]);
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
 function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ata-aot-cli-')); }
@@ -54,5 +54,36 @@ test('cli: build --check exits 1 when stale', () => {
   assert(/stale/.test(res.stdout), `expected 'stale' in stdout: ${res.stdout}`);
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+test('cli: build --watch re-emits on change then exits on SIGINT', async () => {
+  const dir = tmpDir();
+  fs.copyFileSync(path.join(FIXTURES, 'simple.schema.json'), path.join(dir, 'w.schema.json'));
+  const child = require('child_process').spawn('node', [CLI, 'build', path.join(dir, '*.schema.json'), '--watch'], { encoding: 'utf8' });
+  let stdout = '';
+  child.stdout.on('data', (d) => { stdout += d.toString(); });
+
+  // Wait for initial build line.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert(/w\.schema\.json/.test(stdout), `initial build did not emit; stdout=${stdout}`);
+
+  // Modify the schema.
+  const altered = JSON.parse(fs.readFileSync(path.join(dir, 'w.schema.json'), 'utf8'));
+  altered.properties.id.minimum = 7;
+  fs.writeFileSync(path.join(dir, 'w.schema.json'), JSON.stringify(altered));
+
+  // Wait for re-emit.
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const reemitMatches = (stdout.match(/w\.schema\.json/g) || []).length;
+  assert(reemitMatches >= 2, `expected re-emit, stdout occurrences=${reemitMatches}; stdout=${stdout}`);
+
+  child.kill('SIGINT');
+  await new Promise((resolve) => child.on('exit', resolve));
+});
+
+(async () => {
+  for (const [name, fn] of tests) {
+    try { await fn(); console.log(`  PASS  ${name}`); passed++; }
+    catch (e) { console.log(`  FAIL  ${name}: ${e.message}`); failed++; }
+  }
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed > 0 ? 1 : 0);
+})();
