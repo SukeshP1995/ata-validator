@@ -89,6 +89,23 @@ console.log('\nata aot build tests\n');
       const r2 = await build({ globs: [path.join(dir, '*.schema.json')], cacheFile });
       assert(r2.compiled.length === 1 && r2.cached.length === 0, `r2 compiled=${r2.compiled.length} cached=${r2.cached.length}`);
     }],
+
+    ['build: --check returns staleCount > 0 when output is missing', async () => {
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'e.schema.json'));
+      const r = await build({ globs: [path.join(dir, '*.schema.json')], check: true });
+      assert(r.staleCount === 1, `expected 1 stale, got ${r.staleCount}`);
+      assert(r.compiled.length === 0, `--check should not write outputs (got ${r.compiled.length})`);
+    }],
+
+    ['build: --check returns staleCount === 0 when up to date', async () => {
+      const dir = tmpDir();
+      const cacheFile = path.join(dir, '.cache.json');
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'f.schema.json'));
+      await build({ globs: [path.join(dir, '*.schema.json')], cacheFile });
+      const r = await build({ globs: [path.join(dir, '*.schema.json')], cacheFile, check: true });
+      assert(r.staleCount === 0, `expected 0 stale, got ${r.staleCount}`);
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }

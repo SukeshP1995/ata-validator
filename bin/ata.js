@@ -23,6 +23,7 @@ Build options:
   --suffix <str>          Output filename suffix (default: ".compiled")
   -f, --format <fmt>      Module format: esm | cjs. Default: esm
   --abort-early           Use stub errors (smallest bundle)
+  --check                 Check (don't write); exit 1 if any output is stale
 
   -h, --help              Show this message
 
@@ -43,6 +44,7 @@ function parseArgs(argv) {
     if (a === '--name') { out.opts.name = argv[++i]; continue; }
     if (a === '--no-types') { out.opts.types = false; continue; }
     if (a === '--abort-early') { out.opts.abortEarly = true; continue; }
+    if (a === '--check') { out.opts.check = true; continue; }
     if (a === '--out-dir') { out.opts.outDir = argv[++i]; continue; }
     if (a === '--suffix') { out.opts.suffix = argv[++i]; continue; }
     if (a.startsWith('-')) { throw new Error(`Unknown option: ${a}`); }
@@ -141,9 +143,18 @@ function cmdBuild(args) {
     outDir: args.opts.outDir,
     suffix: args.opts.suffix,
     abortEarly: !!args.opts.abortEarly,
+    check: !!args.opts.check,
   }).then((report) => {
+    if (args.opts.check) {
+      process.stdout.write(`ata: check — ${report.cached.length} up to date, ${report.staleCount} stale\n`);
+      if (report.staleCount > 0) process.exit(1);
+      return;
+    }
     for (const c of report.compiled) {
       process.stdout.write(`ata: ${c.input} -> ${c.output} (${c.bytes.toLocaleString()} bytes)\n`);
+    }
+    for (const c of report.cached) {
+      process.stdout.write(`ata: cached  ${c.input}\n`);
     }
     for (const s of report.skipped) {
       process.stdout.write(`ata: skipped ${s.input}: ${s.reason}\n`);

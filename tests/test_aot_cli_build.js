@@ -46,5 +46,13 @@ test('cli: build --out-dir routes outputs', () => {
   assert(fs.existsSync(path.join(outDir, 'q.compiled.mjs')), 'output not in --out-dir');
 });
 
+test('cli: build --check exits 1 when stale', () => {
+  const dir = tmpDir();
+  fs.copyFileSync(path.join(FIXTURES, 'simple.schema.json'), path.join(dir, 'k.schema.json'));
+  const res = spawnSync('node', [CLI, 'build', path.join(dir, '*.schema.json'), '--check'], { encoding: 'utf8' });
+  assert(res.status === 1, `expected exit 1 (stale), got ${res.status}`);
+  assert(/stale/.test(res.stdout), `expected 'stale' in stdout: ${res.stdout}`);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
