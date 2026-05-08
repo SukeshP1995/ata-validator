@@ -140,6 +140,34 @@ console.log('\nata aot build tests\n');
         assert(r.failed.length === 1 && r.skipped.length === 0, `strict mode: expected failed=1 skipped=0, got failed=${r.failed.length} skipped=${r.skipped.length}`);
       }
     }],
+
+    ['build: compiles a YAML schema when yaml package is available', async () => {
+      let yamlAvailable = false;
+      try { require('yaml'); yamlAvailable = true; } catch {}
+      if (!yamlAvailable) {
+        console.log('  SKIP  build: YAML test (yaml package not installed)');
+        return;
+      }
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.yaml'), path.join(dir, 'y.schema.yaml'));
+      const r = await build({ globs: [path.join(dir, '*.schema.yaml')] });
+      assert(r.compiled.length === 1, `expected 1 compiled, got ${r.compiled.length}; failed: ${JSON.stringify(r.failed)}`);
+      assert(fs.existsSync(path.join(dir, 'y.compiled.mjs')), 'output missing');
+    }],
+
+    ['build: clear error when YAML schema seen but yaml package missing', async () => {
+      let yamlAvailable = false;
+      try { require('yaml'); yamlAvailable = true; } catch {}
+      if (yamlAvailable) {
+        console.log('  SKIP  build: yaml-missing test (yaml package IS installed)');
+        return;
+      }
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.yaml'), path.join(dir, 'y.schema.yaml'));
+      const r = await build({ globs: [path.join(dir, '*.schema.yaml')] });
+      assert(r.failed.length === 1, `expected 1 failed, got ${r.failed.length}`);
+      assert(/install.*yaml/i.test(r.failed[0].error), `expected 'install yaml' in error, got: ${r.failed[0].error}`);
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }

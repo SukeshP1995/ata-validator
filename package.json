@@ -104,6 +104,12 @@
     "node-api-headers": "^1.8.0",
     "pkg-prebuilds": "^1.0.0"
   },
+  "peerDependencies": {
+    "yaml": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "yaml": { "optional": true }
+  },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.49",
     "cmake-js": "^8.0.0",
