@@ -50,6 +50,22 @@ console.log('\nata aot build tests\n');
       assert(mod.validate(validDoc).valid === true, 'valid doc should pass');
       assert(mod.validate({ id: 0 }).valid === false, 'invalid doc should fail');
     }],
+
+    ['build: respects outDir', async () => {
+      const dir = tmpDir();
+      const outDir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'x.schema.json'));
+      await build({ globs: [path.join(dir, '*.schema.json')], outDir });
+      assert(fs.existsSync(path.join(outDir, 'x.compiled.mjs')), 'output not in outDir');
+      assert(!fs.existsSync(path.join(dir, 'x.compiled.mjs')), 'output should NOT be alongside source');
+    }],
+
+    ['build: respects suffix', async () => {
+      const dir = tmpDir();
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'y.schema.json'));
+      await build({ globs: [path.join(dir, '*.schema.json')], suffix: '.gen' });
+      assert(fs.existsSync(path.join(dir, 'y.gen.mjs')), 'expected suffix to be .gen');
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }
