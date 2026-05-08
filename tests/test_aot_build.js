@@ -66,6 +66,29 @@ console.log('\nata aot build tests\n');
       await build({ globs: [path.join(dir, '*.schema.json')], suffix: '.gen' });
       assert(fs.existsSync(path.join(dir, 'y.gen.mjs')), 'expected suffix to be .gen');
     }],
+
+    ['build: skips unchanged inputs on second run (cache hit)', async () => {
+      const dir = tmpDir();
+      const cacheFile = path.join(dir, '.cache.json');
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'c.schema.json'));
+      const r1 = await build({ globs: [path.join(dir, '*.schema.json')], cacheFile });
+      assert(r1.compiled.length === 1 && r1.cached.length === 0, `r1 compiled=${r1.compiled.length} cached=${r1.cached.length}`);
+      const r2 = await build({ globs: [path.join(dir, '*.schema.json')], cacheFile });
+      assert(r2.compiled.length === 0 && r2.cached.length === 1, `r2 compiled=${r2.compiled.length} cached=${r2.cached.length}`);
+    }],
+
+    ['build: re-compiles when input content changes', async () => {
+      const dir = tmpDir();
+      const cacheFile = path.join(dir, '.cache.json');
+      fs.copyFileSync(path.join(__dirname, 'fixtures/aot-build/simple.schema.json'), path.join(dir, 'd.schema.json'));
+      await build({ globs: [path.join(dir, '*.schema.json')], cacheFile });
+      // Modify input
+      const altered = JSON.parse(fs.readFileSync(path.join(dir, 'd.schema.json'), 'utf8'));
+      altered.properties.id.minimum = 5;
+      fs.writeFileSync(path.join(dir, 'd.schema.json'), JSON.stringify(altered));
+      const r2 = await build({ globs: [path.join(dir, '*.schema.json')], cacheFile });
+      assert(r2.compiled.length === 1 && r2.cached.length === 0, `r2 compiled=${r2.compiled.length} cached=${r2.cached.length}`);
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }
