@@ -1,0 +1,13 @@
+{
+  "$id": "https://example.com/complex",
+  "type": "object",
+  "properties": {
+    "id": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "email": { "type": "string", "format": "email" },
+    "tags": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+  },
+  "required": ["id", "name", "email"],
+  "patternProperties": { "^x-": { "type": "string" } },
+  "additionalProperties": false
+}

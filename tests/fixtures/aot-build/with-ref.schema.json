@@ -1,0 +1,9 @@
+{
+  "$id": "https://example.com/order",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "integer" },
+    "customer": { "$ref": "https://example.com/simple" }
+  },
+  "required": ["orderId", "customer"]
+}
