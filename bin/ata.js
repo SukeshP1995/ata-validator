@@ -25,6 +25,7 @@ Build options:
   --abort-early           Use stub errors (smallest bundle)
   --check                 Check (don't write); exit 1 if any output is stale
   --max-size <bytes>      Fail build if any compiled module exceeds this gzipped size
+  --strict                Treat any AOT-incompatible schema as a build error (default: skip + warn)
 
   -h, --help              Show this message
 
@@ -46,6 +47,7 @@ function parseArgs(argv) {
     if (a === '--no-types') { out.opts.types = false; continue; }
     if (a === '--abort-early') { out.opts.abortEarly = true; continue; }
     if (a === '--check') { out.opts.check = true; continue; }
+    if (a === '--strict') { out.opts.strict = true; continue; }
     if (a === '--out-dir') { out.opts.outDir = argv[++i]; continue; }
     if (a === '--suffix') { out.opts.suffix = argv[++i]; continue; }
     if (a === '--max-size') {
@@ -155,6 +157,7 @@ function cmdBuild(args) {
     abortEarly: !!args.opts.abortEarly,
     check: !!args.opts.check,
     maxSize: args.opts.maxSize,
+    strict: !!args.opts.strict,
   }).then((report) => {
     if (args.opts.check) {
       process.stdout.write(`ata: check — ${report.cached.length} up to date, ${report.staleCount} stale\n`);

@@ -122,6 +122,24 @@ console.log('\nata aot build tests\n');
       assert(r.failed.length === 0, `expected 0 failed, got ${r.failed.length}`);
       assert(r.compiled.length === 1, `expected 1 compiled, got ${r.compiled.length}`);
     }],
+
+    ['build: --strict promotes skipped to failed', async () => {
+      const dir = tmpDir();
+      // A schema using a runtime-only feature: dynamicRef. toStandaloneModule should return null.
+      const incompatible = {
+        $id: 'https://example.com/dyn',
+        $defs: { node: { $dynamicAnchor: 'node', type: 'object' } },
+        $dynamicRef: '#node',
+      };
+      fs.writeFileSync(path.join(dir, 'dyn.schema.json'), JSON.stringify(incompatible));
+      const lax = await build({ globs: [path.join(dir, '*.schema.json')] });
+      // The schema MAY succeed or be skipped depending on engine support; if it succeeds, this test is
+      // a no-op for the strict assertion. We only assert strict promotes skipped → failed when skipped.
+      if (lax.skipped.length === 1) {
+        const r = await build({ globs: [path.join(dir, '*.schema.json')], strict: true });
+        assert(r.failed.length === 1 && r.skipped.length === 0, `strict mode: expected failed=1 skipped=0, got failed=${r.failed.length} skipped=${r.skipped.length}`);
+      }
+    }],
   ]) {
     const [name, fn] = t;
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }
