@@ -1,0 +1,14 @@
+{
+  "$id": "https://example.com/realworld/user",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "email": { "type": "string", "format": "email" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "role": { "type": "string", "enum": ["admin", "member", "viewer"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "verified": { "type": "boolean" }
+  },
+  "required": ["id", "email", "displayName", "role"],
+  "additionalProperties": false
+}

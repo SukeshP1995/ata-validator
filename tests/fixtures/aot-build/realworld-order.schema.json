@@ -1,0 +1,23 @@
+{
+  "$id": "https://example.com/realworld/order",
+  "type": "object",
+  "properties": {
+    "orderId": { "type": "string", "pattern": "^ORD-[0-9]{8}$" },
+    "customerId": { "type": "string", "format": "uuid" },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string", "minLength": 1 },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "unitPrice": { "type": "number", "minimum": 0 }
+        },
+        "required": ["sku", "quantity", "unitPrice"]
+      }
+    },
+    "total": { "type": "number", "minimum": 0 }
+  },
+  "required": ["orderId", "customerId", "lines", "total"]
+}
