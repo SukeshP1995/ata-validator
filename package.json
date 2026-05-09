@@ -106,6 +106,7 @@
     "scripts/",
     "CMakeLists.txt",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "dependencies": {
