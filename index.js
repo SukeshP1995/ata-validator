@@ -566,23 +566,37 @@ class Validator {
           safeErrFn = (d) => jsErrFn(d, true);
         } catch {}
       }
-      // errFn: use JS codegen if safe, else lazy-native fallback
-      // For unevaluated schemas without errFn, use jsFn as boolean-only fallback
+      // errFn: use JS codegen if safe, else native fallback (only when native
+      // is available). Environments without the native addon — Cloudflare
+      // Workers, browser, Bun without N-API — get a JS-only fallback so the
+      // invalid path doesn't dereference a null _compiled.
       const hasUnevaluated = schemaObj && (schemaObj.unevaluatedProperties !== undefined || schemaObj.unevaluatedItems !== undefined || this._schemaStr.includes('unevaluatedProperties') || this._schemaStr.includes('unevaluatedItems'))
       const hasDynRef = this._schemaStr.includes('"$dynamicRef"') || this._schemaStr.includes('"$dynamicAnchor"')
+      const jsOnlyFallback = (d) => ({
+        valid: jsFn(d),
+        errors: jsFn(d) ? [] : [{
+          keyword: 'validation',
+          instancePath: '',
+          schemaPath: '',
+          params: {},
+          message: 'schema validation failed (detailed errors unavailable without native addon)'
+        }]
+      });
       const errFn =
         safeErrFn ||
         (hasUnevaluated
           ? (d) => ({ valid: jsFn(d), errors: jsFn(d) ? [] : [{ code: 'unevaluated', path: '', message: 'unevaluated property or item' }] })
-          : hasDynRef
-            ? (d) => {
-                this._ensureNative();
-                return this._compiled.validateJSON(JSON.stringify(d));
-              }
-            : (d) => {
-                this._ensureNative();
-                return this._compiled.validate(d);
-              });
+          : !native
+            ? jsOnlyFallback
+            : hasDynRef
+              ? (d) => {
+                  this._ensureNative();
+                  return this._compiled.validateJSON(JSON.stringify(d));
+                }
+              : (d) => {
+                  this._ensureNative();
+                  return this._compiled.validate(d);
+                });
 
       // Best path: combined validator (single pass, validates + collects errors)
       // Valid data: returns VALID_RESULT, no allocation
