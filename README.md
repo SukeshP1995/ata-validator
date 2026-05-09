@@ -1,160 +1,56 @@
-<p align="center">
-  <img src="./assets/ata-validator.svg" alt="ata-validator" width="640" />
-</p>
-
 # ata-validator
 
-Ultra-fast JSON Schema validator powered by [simdjson](https://github.com/simdjson/simdjson). Multi-core parallel validation, RE2 regex, codegen bytecode engine. Standard Schema V1 compatible.
+Compile JSON Schema files into per-schema ESM modules at build time. Drop the runtime validator from your production bundle. Optional runtime API for dynamic schemas.
 
-**[ata-validator.com](https://ata-validator.com)** | **[API Docs](docs/API.md)** | **[Migrate from ajv](docs/migration-from-ajv.md)** | **[Framework integrations](docs/integrations/)** | **[Contributing](CONTRIBUTING.md)**
+[![npm](https://img.shields.io/npm/v/ata-validator)](https://www.npmjs.com/package/ata-validator)
+[![License](https://img.shields.io/npm/l/ata-validator)](LICENSE)
 
-## Performance
-
-### Simple Schema (7 properties, type + format + range + nested object)
-
-| Scenario | ata | ajv | |
-|---|---|---|---|
-| **validate(obj)** valid | 21ns | 108ns | **ata 5.1x faster** |
-| **validate(obj)** invalid | 86ns | 104ns | **ata 1.2x faster** |
-| **isValidObject(obj)** | 20ns | 109ns | **ata 5.4x faster** |
-| **Schema instantiation** (lazy compile) | 8ns | 1.33ms | **ata 159,000x faster** |
-| **First validation** (compile + validate) | 28ns | 1.21ms | **ata 43,000x faster** |
-
-> **Honest read of the three rows above:**
->
-> - **Hot loop** (millions of `validate(obj)` calls on a warm validator): ata is **~5× faster** than ajv. This is the steady-state advantage and what most apps care about most of the time.
-> - **Cold start** (construct + first validate, apples-to-apples vs `ajv.compile(schema) + validate(obj)`): ata is **~43,000× faster**. Matters for serverless cold starts, CLI tools, batch workers — anywhere you instantiate a schema and exercise it once or a few times.
-> - **Instantiation only** (`new Validator(schema)` with no validation yet): ata is **~159,000× faster**, but only because ata defers codegen to first use (lazy compile + a tier-0 interpreter for low-traffic schemas). The number is real but it is constructor cost vs ajv's full compile cost — not the same unit of work. Quote it carefully.
->
-> The lazy compile architecture is also why an instantiated-but-never-validated schema is essentially free in ata, while in ajv it costs the full compile. That's the underlying real win, beyond the multiplier above.
-
-### Complex Schema (patternProperties + dependentSchemas + propertyNames + additionalProperties)
-
-| Scenario | ata | ajv | |
-|---|---|---|---|
-| **validate(obj)** valid | 19ns | 116ns | **ata 6.1x faster** |
-| **validate(obj)** invalid | 62ns | 195ns | **ata 3.1x faster** |
-| **isValidObject(obj)** | 18ns | 122ns | **ata 6.8x faster** |
-
-### Cross-Schema `$ref` (multi-schema with `$id` registry)
-
-| Scenario | ata | ajv | |
-|---|---|---|---|
-| **validate(obj)** valid | 13ns | 25ns | **ata 2.0x faster** |
-| **validate(obj)** invalid | 28ns | 56ns | **ata 2.0x faster** |
-
-> Measured with [mitata](https://github.com/evanwashere/mitata) on Apple M4 Pro (process-isolated). [Benchmark code](benchmark/bench_complex_mitata.mjs)
-
-### unevaluatedProperties / unevaluatedItems
-
-| Scenario | ata | ajv | |
-|---|---|---|---|
-| **Tier 1** (properties only) valid | 3.3ns | 8.5ns | **ata 2.6x faster** |
-| **Tier 1** invalid | 3.6ns | 18.6ns | **ata 5.2x faster** |
-| **Tier 2** (allOf) valid | 3.3ns | 10.1ns | **ata 3.0x faster** |
-| **Tier 3** (anyOf) valid | 6.7ns | 22.9ns | **ata 3.4x faster** |
-| **Tier 3** invalid | 7.5ns | 41.8ns | **ata 5.6x faster** |
-| **unevaluatedItems** valid | 0.97ns | 5.4ns | **ata 5.6x faster** |
-| **unevaluatedItems** invalid | 0.99ns | 14.9ns | **ata 15.0x faster** |
-| **Compilation** | 8.8ns | 2.64ms | **ata 298,000x faster** |
-
-Three-tier hybrid codegen: static schemas compile to zero-overhead key checks, dynamic schemas (anyOf/oneOf) use bitmask tracking with V8-inlined branch functions. [Benchmark code](benchmark/bench_unevaluated_mitata.mjs)
-
-### vs Ecosystem (Zod, Valibot, TypeBox)
-
-| Scenario | ata | ajv | typebox | zod | valibot |
-|---|---|---|---|---|---|
-| **validate (valid)** | **7ns** | 38ns | 50ns | 342ns | 337ns |
-| **validate (invalid, all errors)** | **38ns** | 102ns | n/a | 11.9μs | 855ns |
-| **isValid (invalid, boolean)** | **0.93ns** | 16ns | 2.3ns | n/a | n/a |
-| **compilation** | **9ns** | 1.20ms | 53μs | n/a | n/a |
-| **first validation** | **16ns** | 1.16ms | 54μs | n/a | n/a |
-
-> Different categories: ata/ajv/typebox are JSON Schema validators, zod/valibot are schema-builder DSLs. The two invalid-path rows compare different units of work — `validate(invalid, all errors)` walks the full schema and builds an errors array (apples-to-apples vs ajv `{allErrors: true}`), while `isValid(invalid, boolean)` returns false on the first failed check (apples-to-apples vs typebox `Check()` and ajv `{allErrors: false}`). Reading both rows together avoids the trap of comparing a full error walk against a first-fail boolean. [Benchmark code](benchmark/bench_all_mitata.mjs)
-
-### Large Data - JS Object Validation
-
-| Size | ata | ajv | |
-|---|---|---|---|
-| 10 users (2KB) | 6.0M ops/sec | 2.4M ops/sec | **ata 2.5x faster** |
-| 100 users (20KB) | 621K ops/sec | 229K ops/sec | **ata 2.7x faster** |
-| 1,000 users (205KB) | 63K ops/sec | 22.5K ops/sec | **ata 2.8x faster** |
-
-### Real-World Scenarios
-
-| Scenario | ata | ajv | |
-|---|---|---|---|
-| **Serverless cold start** (50 schemas) | 0.087ms | 3.67ms | **ata 42x faster** |
-| **ReDoS protection** (`^(a+)+$`) | 0.3ms | 765ms | **ata immune (RE2)** |
-| **Batch NDJSON** (10K items, multi-core) | 13.4M/sec | 5.1M/sec | **ata 2.6x faster** |
-| **Fastify startup** (5 routes) | 0.5ms | 6.0ms | **ata 12x faster** |
-
-> Isolated single-schema benchmarks. Results vary by workload and hardware.
-
-### How it works
-
-**Combined single-pass validator**: ata compiles schemas into a single function that validates and collects errors in one pass. Valid data returns `VALID_RESULT` with zero allocation. Invalid data collects errors inline with pre-allocated frozen error objects - no double validation, no try/catch (3.3x V8 deopt). Lazy compilation defers all work to first usage - constructor is near-zero cost.
-
-**JS codegen**: Schemas are compiled to monolithic JS functions (like ajv). Full keyword support including `patternProperties`, `dependentSchemas`, `propertyNames`, `unevaluatedProperties`, `unevaluatedItems`, cross-schema `$ref` with `$id` registry, and Draft 7 auto-detection. Three-tier hybrid approach for unevaluated keywords: compile-time resolution for static schemas, bitmask tracking for dynamic ones. charCodeAt prefix matching replaces regex for simple patterns (4x faster). Merged key iteration loops (patternProperties + propertyNames + additionalProperties in a single `for..in`).
-
-**V8 TurboFan optimizations**: Destructuring batch reads, `undefined` checks instead of `in` operator, context-aware type guard elimination, property hoisting to local variables, tiered uniqueItems (nested loop for small arrays), inline key comparison for small property sets (no Set.has overhead).
-
-**Adaptive simdjson**: For large documents (>8KB) with selective schemas, simdjson On Demand seeks only the needed fields - skipping irrelevant data at GB/s speeds.
-
-### $dynamicRef / $dynamicAnchor / $anchor
-
-| Scenario | ata | ajv | |
-|---|---|---|---|
-| **$dynamicRef tree** valid | 22ns | 54ns | **ata 2.4x faster** |
-| **$dynamicRef tree** invalid | 71ns | 77ns | **ata 1.1x faster** |
-| **$dynamicRef override** valid | 2.6ns | 187ns | **ata 71x faster** |
-| **$dynamicRef override** invalid | 50ns | 189ns | **ata 3.8x faster** |
-| **$anchor array** valid | 2.2ns | 3.2ns | **ata 1.4x faster** |
-
-Self-recursive named functions for $dynamicRef, compile-time cross-schema resolution, zero-wrapper hybrid path. [Benchmark code](benchmark/bench_dynamicref_vs_ajv.mjs)
-
-### JSON Schema Test Suite
-
-**98.5%** pass rate (1172/1190) on official [JSON Schema Test Suite](https://github.com/json-schema-org/JSON-Schema-Test-Suite) (Draft 2020-12), excluding remote refs and vocabulary (intentionally unsupported). **95.3%** on [@exodus/schemasafe](https://github.com/ExodusMovement/schemasafe) test suite.
-
-## When to use ata
-
-- **High-throughput `validate(obj)`** - 5.1x faster than ajv, 47x faster than zod
-- **Complex schemas** - `patternProperties`, `dependentSchemas`, `propertyNames`, `unevaluatedProperties` all inline JS codegen
-- **Multi-schema projects** - cross-schema `$ref` with `$id` registry, `addSchema()` API
-- **Draft 7 migration** - auto-detects `$schema`, normalizes Draft 7 keywords transparently
-- **Serverless / cold starts** - 6,904x faster compilation, 5,148x faster first validation
-- **Security-sensitive apps** - RE2 regex, immune to ReDoS attacks
-- **Batch/streaming validation** - NDJSON log processing, data pipelines (2.6x faster)
-- **Standard Schema V1** - native support for Fastify v5, tRPC, TanStack
-- **C/C++ embedding** - native library, no JS runtime needed
-
-## When to use ajv
-
-- **Existing ajv ecosystem** - plugins, custom keywords, large community
-- **Full unevaluatedProperties/Items** - ata covers most cases but some edge cases remain
-
-## Features
-
-- **Hybrid validator**: 4.1x faster than ajv, up to 70x faster on $dynamicRef - zero-wrapper hybrid path for valid data (no allocation), combined codegen for error collection. Schema compilation cache for repeated schemas
-- **$dynamicRef / $dynamicAnchor / $anchor**: Full Draft 2020-12 dynamic reference support. Self-recursive named functions, compile-time cross-schema resolution (42/42 spec tests)
-- **Cross-schema `$ref`**: `schemas` option and `addSchema()` API. Compile-time resolution with `$id` registry, zero runtime overhead
-- **Draft 7 support**: Auto-detects `$schema` field, normalizes `dependencies`/`additionalItems`/`definitions` transparently
-- **Multi-core**: Parallel validation across all CPU cores - 13.4M validations/sec
-- **simdjson**: SIMD-accelerated JSON parsing at GB/s speeds, adaptive On Demand for large docs
-- **RE2 regex**: Linear-time guarantees, immune to ReDoS attacks (2391x faster on pathological input)
-- **V8-optimized codegen**: Destructuring batch reads, type guard elimination, property hoisting
-- **Standard Schema V1**: Compatible with Fastify, tRPC, TanStack, Drizzle
-- **Zero-copy paths**: Buffer and pre-padded input support - no unnecessary copies
-- **Defaults + coercion**: `default` values, `coerceTypes`, `removeAdditional` support
-- **C/C++ library**: Native API for non-Node.js environments
-- **98.5% spec compliant**: Draft 2020-12
-
-## Installation
+## Quick start
 
 ```bash
-npm install ata-validator
+npm install --save-dev ata-validator
+npx ata build 'schemas/*.json' --out-dir src/generated
 ```
+
+In your code:
+
+```ts
+import { validate, isValid, type User } from './generated/user.compiled.mjs'
+
+if (isValid(req.body)) {
+  const user: User = req.body
+  // ...
+}
+```
+
+The `.compiled.mjs` modules are self-contained: zero runtime dependency on ata-validator, fully tree-shakeable, with TypeScript types emitted alongside.
+
+## Why AOT
+
+| Dimension | Schema | ata-AOT | AJV-runtime | Difference |
+|---|---|---|---|---|
+| Bundle (gzipped) | simple | 955 B | 52.7 KB | 56x smaller |
+| Bundle (gzipped) | complex | 1.6 KB | 52.7 KB | 32x smaller |
+| Cold start | simple | 21 ms | 38 ms | 1.8x faster |
+| Throughput (10M ops) | simple | 345 Mops/s | 116 Mops/s | 3.0x faster |
+| Compile time | simple | 6 µs | 1.5 ms | 246x faster |
+
+Reproduce on your machine with `npm run bench:aot-vs-ajv`. Numbers measured on Apple M4 Pro, Node 25.2.1.
+
+The wins are largest on bundle size and compile time because AOT moves work from runtime to build time. Throughput and cold start are also faster because the compiled validator is a tight straight-line function with no schema-walk overhead.
+
+## When to use the runtime API instead
+
+`ata build` is for schemas you know at build time. If your schemas are user-supplied at runtime (form builders, no-code platforms, dynamic API ingestion), use the runtime API:
+
+```js
+import { Validator } from 'ata-validator'
+
+const v = new Validator(schema)
+const result = v.validate(data)
+```
+
+The runtime API is unchanged from previous releases. AJV-shim users continue importing from `ata-validator/compat`.
 
 ## Usage
 
