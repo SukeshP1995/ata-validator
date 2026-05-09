@@ -24,6 +24,7 @@ Build options:
   -f, --format <fmt>      Module format: esm | cjs. Default: esm
   --abort-early           Use stub errors (smallest bundle)
   --check                 Check (don't write); exit 1 if any output is stale
+  --cache-file <path>     Cache file for incremental builds (default: cache disabled)
   --max-size <bytes>      Fail build if any compiled module exceeds this gzipped size
   --strict                Treat any AOT-incompatible schema as a build error (default: skip + warn)
   --watch                 Re-emit on schema change (Ctrl-C to exit)
@@ -52,6 +53,7 @@ function parseArgs(argv) {
     if (a === '--strict') { out.opts.strict = true; continue; }
     if (a === '--out-dir') { out.opts.outDir = argv[++i]; continue; }
     if (a === '--suffix') { out.opts.suffix = argv[++i]; continue; }
+    if (a === '--cache-file') { out.opts.cacheFile = argv[++i]; continue; }
     if (a === '--max-size') {
       const v = argv[++i];
       const n = Number(v);
@@ -162,6 +164,7 @@ function cmdBuild(args) {
     maxSize: args.opts.maxSize,
     strict: !!args.opts.strict,
     types: args.opts.types,
+    cacheFile: args.opts.cacheFile,
   };
 
   const printReport = (report) => {

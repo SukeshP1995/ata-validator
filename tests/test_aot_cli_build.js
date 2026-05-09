@@ -79,6 +79,18 @@ test('cli: build --watch re-emits on change then exits on SIGINT', async () => {
   await new Promise((resolve) => child.on('exit', resolve));
 });
 
+test('cli: build --cache-file uses cache for second run', () => {
+  const dir = tmpDir();
+  const cacheFile = path.join(dir, '.cache.json');
+  fs.copyFileSync(path.join(FIXTURES, 'simple.schema.json'), path.join(dir, 'cf.schema.json'));
+  const r1 = spawnSync('node', [CLI, 'build', path.join(dir, '*.schema.json'), '--cache-file', cacheFile], { encoding: 'utf8' });
+  assert(r1.status === 0, `r1 exit ${r1.status}: ${r1.stderr}`);
+  assert(fs.existsSync(cacheFile), 'cache file should be created');
+  const r2 = spawnSync('node', [CLI, 'build', path.join(dir, '*.schema.json'), '--cache-file', cacheFile], { encoding: 'utf8' });
+  assert(r2.status === 0, `r2 exit ${r2.status}: ${r2.stderr}`);
+  assert(/cached/.test(r2.stdout), `r2 stdout should mention cached: ${r2.stdout}`);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); console.log(`  PASS  ${name}`); passed++; }
