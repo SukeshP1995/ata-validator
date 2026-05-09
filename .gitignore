@@ -25,3 +25,6 @@ tests/ts_fixtures/**/validator.cjs
 benchmark/.scoreboard/*.json
 !benchmark/.scoreboard/baseline.json
 traces/
+
+# npm pack artifacts
+*.tgz
